@@ -133,6 +133,14 @@ export function CreateView() {
   const [i2iDragOver, setI2iDragOver] = useState(false)
   const installPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Imperative refs for the file inputs. The previous label-wraps-input
+  // pattern relied on the browser firing a synthetic click on the
+  // display:none input, which silently stopped working in some Tauri 2
+  // webview builds (Discord reload__, GH disc #35 SadeSyu — "Upload button
+  // doesn't react"). Using `inputRef.current.click()` from a button onClick
+  // bypasses that fragility — same pattern as ChatInput's clip button.
+  const i2iFileInputRef = useRef<HTMLInputElement>(null)
+  const i2vFileInputRef = useRef<HTMLInputElement>(null)
   const pollIdRef = useRef(0)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -287,7 +295,13 @@ export function CreateView() {
                             setTimeout(() => pollStatus(), 2000)
                           } else if (data.status === 'error') {
                             if (installPollRef.current) clearInterval(installPollRef.current)
-                            setInstallError(data.error || 'Failed')
+                            // The Rust side surfaces the actual failure as the
+                            // last log line (`update("error", &err)` appends to
+                            // `logs`). Falling back to "Failed" lost every
+                            // diagnostic — users saw "ComfyUI not responding"
+                            // with no clue that git or Python wasn't installed.
+                            const lastLog = (data.logs?.length ? data.logs[data.logs.length - 1] : '') as string
+                            setInstallError(lastLog || data.error || 'Install failed — see logs above for details')
                             setInstalling(false)
                           }
                         } catch { /* keep polling */ }
@@ -549,10 +563,13 @@ export function CreateView() {
                     <span className="truncate max-w-[200px]">{i2vImage}</span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <label className="cursor-pointer px-2 py-0.5 rounded text-[10px] text-gray-400 hover:text-white hover:bg-white/10 transition-colors">
+                    <button
+                      type="button"
+                      onClick={() => i2vFileInputRef.current?.click()}
+                      className="cursor-pointer px-2 py-0.5 rounded text-[10px] text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                    >
                       Replace
-                      <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleI2vUpload(f) }} />
-                    </label>
+                    </button>
                     <button
                       onClick={() => setI2vImage(null)}
                       className="p-0.5 rounded text-gray-500 hover:text-red-400 hover:bg-white/10 transition-colors"
@@ -563,7 +580,11 @@ export function CreateView() {
                   </div>
                 </div>
               ) : (
-                <label className="flex flex-col items-center gap-1 px-3 py-3 cursor-pointer">
+                <button
+                  type="button"
+                  onClick={() => i2vFileInputRef.current?.click()}
+                  className="w-full flex flex-col items-center gap-1 px-3 py-3 cursor-pointer focus:outline-none"
+                >
                   {i2vUploading ? (
                     <Loader2 size={16} className="animate-spin text-gray-400" />
                   ) : (
@@ -575,9 +596,14 @@ export function CreateView() {
                   <span className="text-[9px] text-gray-600">
                     {videoModelType === 'svd' ? 'SVD' : 'FramePack'} generates video from an image
                   </span>
-                  <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleI2vUpload(f) }} />
-                </label>
+                </button>
               )}
+              <input
+                ref={i2vFileInputRef}
+                type="file" accept="image/*"
+                className="sr-only"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleI2vUpload(f); e.target.value = '' }}
+              />
             </div>
           )}
 
@@ -603,10 +629,19 @@ export function CreateView() {
                       <span className="truncate max-w-[200px]">{i2iImage}</span>
                     </div>
                     <div className="flex items-center gap-1">
-                      <label className="cursor-pointer px-2 py-0.5 rounded text-[10px] text-gray-400 hover:text-white hover:bg-white/10 transition-colors">
+                      <button
+                        type="button"
+                        onClick={() => i2iFileInputRef.current?.click()}
+                        className="cursor-pointer px-2 py-0.5 rounded text-[10px] text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                      >
                         Replace
-                        <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleI2iUpload(f) }} />
-                      </label>
+                      </button>
+                      <input
+                        ref={i2iFileInputRef}
+                        type="file" accept="image/*"
+                        className="sr-only"
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleI2iUpload(f); e.target.value = '' }}
+                      />
                       <button
                         onClick={() => setI2iImage(null)}
                         className="p-0.5 rounded text-gray-500 hover:text-red-400 hover:bg-white/10 transition-colors"
@@ -617,7 +652,11 @@ export function CreateView() {
                     </div>
                   </div>
                 ) : (
-                  <label className="flex flex-col items-center gap-1 px-3 py-3 cursor-pointer">
+                  <button
+                    type="button"
+                    onClick={() => i2iFileInputRef.current?.click()}
+                    className="w-full flex flex-col items-center gap-1 px-3 py-3 cursor-pointer focus:outline-none"
+                  >
                     {i2iUploading ? (
                       <Loader2 size={16} className="animate-spin text-gray-400" />
                     ) : (
@@ -629,8 +668,13 @@ export function CreateView() {
                     <span className="text-[9px] text-gray-600">
                       Image-to-Image: transforms your image guided by the prompt
                     </span>
-                    <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleI2iUpload(f) }} />
-                  </label>
+                    <input
+                      ref={i2iFileInputRef}
+                      type="file" accept="image/*"
+                      className="sr-only"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleI2iUpload(f); e.target.value = '' }}
+                    />
+                  </button>
                 )}
               </div>
 

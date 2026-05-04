@@ -37,10 +37,23 @@ export const useModelStore = create<ModelState>()(
       categoryFilter: 'all',
 
       setModels: (models) =>
-        set((state) => ({
-          models,
-          activeModel: state.activeModel || (models.length > 0 ? models[0].name : null),
-        })),
+        set((state) => {
+          // Keep the persisted activeModel only if it's actually still
+          // present in the freshly fetched list. Without this validation a
+          // model name persists in the picker after the underlying provider
+          // (e.g. Ollama) was uninstalled or the model was deleted — the
+          // dropdown then shows a dead name and clicking it opens an empty
+          // list. Falls back to the first available model, mirroring the
+          // first-launch behavior so a user is never stuck with no
+          // selection while a model exists.
+          const stillValid = !!state.activeModel && models.some((m) => m.name === state.activeModel)
+          return {
+            models,
+            activeModel: stillValid
+              ? state.activeModel
+              : (models.length > 0 ? models[0].name : null),
+          }
+        }),
 
       setActiveModel: (name) => {
         const prev = get().activeModel

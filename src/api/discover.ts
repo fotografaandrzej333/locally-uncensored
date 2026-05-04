@@ -566,7 +566,11 @@ export function deriveQ4FilenameFromRepo(repoName: string): string {
 
 export async function searchHuggingFaceModels(query: string): Promise<DiscoverModel[]> {
   try {
-    const searchQuery = query.includes('gguf') ? query : `${query} gguf`
+    // Case-insensitive — HF repos almost always end in `-GGUF` (uppercase),
+    // and the previous case-sensitive `includes('gguf')` missed those, so a
+    // user pasting a full repo path like `bartowski/Foo-GGUF` got a search
+    // string mangled to `bartowski/Foo-GGUF gguf` which matched 0 HF rows.
+    const searchQuery = /gguf/i.test(query) ? query : `${query} gguf`
     const url = `https://huggingface.co/api/models?search=${encodeURIComponent(searchQuery)}&filter=gguf&sort=downloads&direction=-1&limit=20`
 
     let json: string

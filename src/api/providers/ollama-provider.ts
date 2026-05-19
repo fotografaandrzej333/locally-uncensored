@@ -77,7 +77,14 @@ export class OllamaProvider implements ProviderClient {
       stream: true,
     }
 
-    const ollamaOptions: Record<string, any> = { num_gpu: 99 }
+    // v2.4.6 Bug L: dropped hardcoded `num_gpu: 99`. Old code forced ALL
+    // layers onto the GPU on every chat request, which on 8 GB laptop cards
+    // pushed the KV cache out into system RAM (nightmare13740 Discord
+    // 2026-05-18: 30 tok/s in ollama CLI vs 6.9 tok/s in LU on RTX 4070
+    // Laptop + gemma3:4b). Letting Ollama do its own VRAM-aware layer
+    // placement restores CLI parity on tight cards and is a no-op on
+    // cards with headroom.
+    const ollamaOptions: Record<string, any> = {}
     if (options?.temperature !== undefined) ollamaOptions.temperature = options.temperature
     if (options?.topP !== undefined) ollamaOptions.top_p = options.topP
     if (options?.topK !== undefined) ollamaOptions.top_k = options.topK
@@ -150,7 +157,8 @@ export class OllamaProvider implements ProviderClient {
       stream: false,
     }
 
-    const ollamaOptions: Record<string, any> = { num_gpu: 99 }
+    // v2.4.6 Bug L: see chatStream() above — same num_gpu:99 removal.
+    const ollamaOptions: Record<string, any> = {}
     if (options?.temperature !== undefined) ollamaOptions.temperature = options.temperature
     if (options?.topP !== undefined) ollamaOptions.top_p = options.topP
     if (options?.topK !== undefined) ollamaOptions.top_k = options.topK

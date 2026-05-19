@@ -56,7 +56,15 @@ export async function chatStream(
   options: { temperature?: number; top_p?: number; top_k?: number; num_predict?: number } = {},
   signal?: AbortSignal
 ): Promise<Response> {
-  const opts = { num_gpu: 99, ...options }
+  // v2.4.6 Bug L: dropped hardcoded `num_gpu: 99`. Old code forced ALL layers
+  // onto the GPU regardless of free VRAM, which on 8 GB laptop cards (e.g.
+  // 4070 laptop + gemma3:4b) pushed the KV cache out into system RAM and
+  // dropped chat throughput from 30 tok/s (ollama CLI auto-detect) to 6.9
+  // tok/s in LU (nightmare13740 Discord 2026-05-18). Letting Ollama do its
+  // own layer/VRAM decision restores parity with the CLI on tight cards
+  // and is a no-op on cards with headroom (Ollama already maxes layers
+  // when it can fit them).
+  const opts = { ...options }
   const res = await localFetchStream(ollamaUrl("/chat"), {
     method: "POST",
     body: JSON.stringify({ model, messages, options: opts, stream: true }),
@@ -73,7 +81,8 @@ export async function chatStreamWithTools(
   options: { temperature?: number; top_p?: number; top_k?: number; num_predict?: number } = {},
   signal?: AbortSignal
 ): Promise<Response> {
-  const opts = { num_gpu: 99, ...options }
+  // v2.4.6 Bug L: see chatStream() above — same num_gpu:99 removal.
+  const opts = { ...options }
   const res = await localFetchStream(ollamaUrl("/chat"), {
     method: "POST",
     body: JSON.stringify({ model, messages, tools, options: opts, stream: true }),
@@ -98,10 +107,11 @@ export async function chatWithTools(
   tools: { type: string; function: { name: string; description: string; parameters: any } }[],
   options: { temperature?: number; top_p?: number; top_k?: number; num_predict?: number } = {},
 ): Promise<{ content: string; tool_calls?: any[] }> {
+  // v2.4.6 Bug L: see chatStream() above — same num_gpu:99 removal.
   const res = await localFetch(ollamaUrl("/chat"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, tools, options: { num_gpu: 99, ...options }, stream: false }),
+    body: JSON.stringify({ model, messages, tools, options: { ...options }, stream: false }),
   })
   if (!res.ok) {
     try {

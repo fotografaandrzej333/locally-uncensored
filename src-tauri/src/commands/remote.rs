@@ -1631,7 +1631,9 @@ button{-webkit-appearance:none;appearance:none}
       messages: apiMessages,
       tools: tools,
       stream: false,
-      options: {num_gpu: 99, num_predict: 16384}
+      // v2.4.6 Bug L: dropped hardcoded num_gpu:99 (forced all layers to GPU,
+      // killed 8 GB-VRAM laptop chat speed). Ollama auto-decides layer count.
+      options: {num_predict: 16384}
     };
     // Tri-state think flag — same logic as _doSend.
     if(isThinkingCompatible(currentModel)){
@@ -2933,7 +2935,8 @@ button{-webkit-appearance:none;appearance:none}
     // and "don't let tagged-thinking models loop forever" (true `-1`
     // caused Gemma 3/4 to think without ever emitting an answer). 16 k is
     // enough for the longest reasonable agent reply plus deep thinking.
-    var body = {model:currentModel, messages:apiMsgs, stream:true, options:{num_gpu:99, num_predict:16384}};
+    // v2.4.6 Bug L: dropped num_gpu:99 — see nativeToolChat() comment above.
+    var body = {model:currentModel, messages:apiMsgs, stream:true, options:{num_predict:16384}};
     // Tri-state: for thinking-capable models we normally send explicit
     // true|false. Explicit `false` tells Ollama to SKIP thinking (saves
     // tokens) instead of silently letting the model emit <think> tags we'd

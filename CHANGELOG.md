@@ -4,6 +4,20 @@ All notable changes to Locally Uncensored are documented here.
 
 ## [Unreleased]
 
+## [2.4.6] - 2026-05-19
+
+Drop-in hotfix on top of v2.4.5. **One bug**: nightmare13740 (Discord 2026-05-18).
+
+### Fixed — chat throughput on tight VRAM cards
+
+- **Dropped hardcoded `num_gpu: 99` override on every Ollama chat request** (Bug L — nightmare13740 Discord #help-chat, 2026-05-18). The override was added in v2.2.1 (commit `ead5673`, april 2026) on the assumption "all desktop users have 16 GB+ cards, Ollama's auto-detect is too conservative, force max GPU offload." That assumption no longer holds with 2026 laptop GPUs (RTX 4070 Laptop ships with 8 GB) and modern model context windows (Gemma 3/4 advertise 128k native context, which materially expands the KV cache footprint). Symptom on nightmare13740's RTX 4070 Laptop 8 GB + gemma3:4b: ollama CLI without `num_gpu` ran at **30 tok/s** with sane VRAM use; LU's chat hit **6.9 tok/s** with VRAM saturated and 4 GB spilled to system RAM. The forced 99-layer offload exhausted VRAM, the KV cache had nowhere to live except system RAM, and every generated token thrashed across the PCIe bus. v2.4.6 removes the override from all five chat sites — `chatStream`, `chatStreamWithTools`, and `chatWithTools` in `src/api/ollama.ts`, `chatStream` and `chatWithTools` in `src/api/providers/ollama-provider.ts`, the Agent-Mode tool-call body in `src/lib/ollama-stream-tools.ts`, and both Remote-Access JS-template paths (`nativeToolChat` and the main agent loop) in `src-tauri/src/commands/remote.rs`. Ollama now applies its own VRAM-aware layer-placement logic on every request, which is a no-op on cards with headroom (Ollama already maxes layer count when VRAM allows) and restores CLI parity on tight cards.
+
+### Tests
+
+- `vitest`: **2284 passed** (93 files, unchanged count). Rewrote one existing assertion in `provider-ollama.test.ts` ("always includes options with num_gpu" → "v2.4.6 Bug L: NEVER sets num_gpu — Ollama decides layer placement itself") and two assertions in `mobile-parity.test.ts` to lock down the absence of `num_gpu` in the request body.
+- `cargo test --release`: **89 passed + 1 ignored** — no Rust unit-test changes (the Rust edits were in JS templates that aren't unit-tested at the Rust layer).
+- `cargo check --release`: clean (pre-existing dead-code warnings only).
+
 ## [2.4.5] - 2026-05-17
 
 Drop-in hotfix on top of v2.4.4. **Fourteen bugs total**: six user-reported (A — Discord/Reddit; B — GH #38; C — GH Discussion #39; D — Discord; E — GH #32 comment; K — Discord #help-coding-agent) plus eight surfaced during the real-tester Arch live verification sweep (F — `install_custom_node` not venv-aware on PEP 668; G — `install_ollama` Windows-only `.exe` download, plus a refix when the original tarball URL stopped resolving; H — `install_lmstudio` Windows-only; I — `install_python` Windows-only winget; J — `start_comfyui` crashes on non-NVIDIA systems without `--cpu` flag).

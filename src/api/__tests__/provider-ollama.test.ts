@@ -451,7 +451,13 @@ describe('OllamaProvider', () => {
       expect(body.options.num_predict).toBe(1024)
     })
 
-    it('always includes options with num_gpu even when no chat options provided', async () => {
+    it('v2.4.6 Bug L: NEVER sets num_gpu — Ollama decides layer placement itself', async () => {
+      // Pre-v2.4.6 this asserted body.options === { num_gpu: 99 }, which
+      // forced all model layers onto the GPU and pushed the KV cache into
+      // system RAM on 8 GB-VRAM laptop cards (nightmare13740 report:
+      // 30 tok/s ollama CLI vs 6.9 tok/s LU on RTX 4070 Laptop + gemma3:4b).
+      // The fix removes the override so Ollama can apply its own VRAM-aware
+      // auto-layer logic.
       const provider = new OllamaProvider(makeConfig())
       mockLocalFetch.mockResolvedValueOnce(
         new Response(JSON.stringify({
@@ -467,7 +473,8 @@ describe('OllamaProvider', () => {
       )
 
       const body = JSON.parse(mockLocalFetch.mock.calls[0][1]?.body as string)
-      expect(body.options).toEqual({ num_gpu: 99 })
+      expect(body.options.num_gpu).toBeUndefined()
+      expect(body.options).toEqual({})
     })
 
     it('handles empty message content', async () => {

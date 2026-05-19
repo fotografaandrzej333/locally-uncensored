@@ -38,12 +38,15 @@ export async function streamOllamaChatWithTools(
     return msg
   })
 
+  // v2.4.6 Bug L: dropped hardcoded `num_gpu: 99` — see src/api/ollama.ts
+  // for the full rationale. Ollama now decides layer placement itself,
+  // which restores CLI parity on 8 GB laptop cards.
   const body: Record<string, any> = {
     model: modelId,
     messages: ollamaMessages,
     tools,
     stream: true,
-    options: { num_gpu: 99 },
+    options: {},
   }
   if (options.temperature !== undefined) body.options.temperature = options.temperature
   if (options.maxTokens) body.options.num_predict = options.maxTokens

@@ -52,7 +52,10 @@ function transformUserMessageWithCaveman(msg: ChatMessage, caveman: CavemanMode,
 }
 
 function buildOllamaBody(model: string, messages: ChatMessage[], opts: { thinking?: boolean } = {}) {
-  const body: any = { model, messages, stream: true, options: { num_gpu: 99 } }
+  // v2.4.6 Bug L: dropped hardcoded num_gpu:99 (was forcing all layers to GPU
+  // on every request, killing 8 GB-VRAM laptop chat speed). Ollama
+  // auto-decides layer placement based on free VRAM now.
+  const body: any = { model, messages, stream: true, options: {} }
   if (opts.thinking === true && isThinkingCompatible(model)) body.think = true
   return body
 }
@@ -244,7 +247,8 @@ describe('mobile-parity › buildOllamaBody', () => {
     const b = buildOllamaBody('qwen3:8b', msgs, { thinking: false })
     expect(b.think).toBeUndefined()
     expect(b.stream).toBe(true)
-    expect(b.options.num_gpu).toBe(99)
+    // v2.4.6 Bug L: num_gpu no longer forced.
+    expect(b.options.num_gpu).toBeUndefined()
   })
 
   it('sets think:true when thinking=true AND compatible', () => {
@@ -272,9 +276,14 @@ describe('mobile-parity › buildOllamaBody', () => {
     expect(b.stream).toBe(true)
   })
 
-  it('sets num_gpu to 99 for GPU offload', () => {
+  it('v2.4.6 Bug L: does NOT force num_gpu — Ollama auto-decides layers', () => {
+    // Pre-v2.4.6 we set num_gpu:99 to force all layers to GPU. On 8 GB-VRAM
+    // laptop cards that drowned the KV cache into system RAM (4.3× slower
+    // than ollama CLI per nightmare13740 report). Letting Ollama decide
+    // restores CLI parity on tight cards and is a no-op on cards with
+    // headroom.
     const b = buildOllamaBody('llama3.1:8b', msgs)
-    expect(b.options.num_gpu).toBe(99)
+    expect(b.options.num_gpu).toBeUndefined()
   })
 })
 

@@ -3,7 +3,7 @@
  */
 
 import { useCallback, useRef } from 'react'
-import { useBenchmarkStore } from '../stores/benchmarkStore'
+import { useBenchmarkStore, computeGenerationTps } from '../stores/benchmarkStore'
 import { getProviderForModel } from '../api/providers'
 import { BENCHMARK_PROMPTS } from '../lib/benchmark-prompts'
 import type { ChatMessage } from '../api/providers/types'
@@ -52,7 +52,7 @@ export function useBenchmark() {
         store.addResult({
           modelName,
           promptId: prompt.id,
-          tokensPerSec: totalTime > 0 ? (tokenCount / totalTime) * 1000 : 0,
+          tokensPerSec: computeGenerationTps(tokenCount, totalTime, firstTokenTime),
           timeToFirstToken: firstTokenTime,
           totalTime,
           totalTokens: tokenCount,

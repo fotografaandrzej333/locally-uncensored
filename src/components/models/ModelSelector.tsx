@@ -1,13 +1,107 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronDown, Check, Loader2, Power } from 'lucide-react'
+import { ChevronDown, Check, Loader2, Power, PlayCircle } from 'lucide-react'
 import { useModels } from '../../hooks/useModels'
 import { useModelStore } from '../../stores/modelStore'
 import { useProviderStore } from '../../stores/providerStore'
 import { unloadAllModels } from '../../api/ollama'
 import { displayModelName } from '../../api/providers'
+import { backendCall } from '../../api/backend'
 import { formatBytes } from '../../lib/formatters'
 import type { AIModel } from '../../types/models'
+
+// ── Bug Q (v2.4.7 — wakeywakeynow GH #41) ─────────────────────
+//
+// Symptom: user has LM Studio installed with models on disk, opens LU's
+// chat model picker, sees only Ollama models, no hint about LM Studio.
+// Root cause: LM Studio's HTTP server doesn't auto-start with the app —
+// the user has to click Developer → Start Server in LM Studio, OR run
+// `lms server start`. When the server is off, LU's OpenAI-compat probe
+// returns nothing and LM Studio is silently dropped from the dropdown.
+// v2.4.4 added a "Start LM Studio server" hint to onboarding, but the
+// chat picker (where users actually look for their models) never got
+// the same treatment. This banner closes that gap. Polls
+// `lmstudio_server_status` on dropdown open; renders inline when LM
+// Studio is detected on disk (lms.exe present OR models in
+// ~/.lmstudio/models/) AND its server isn't running. Clicking "Start
+// Server" hits the same Tauri command the Settings panel uses, then
+// re-fetches the model list so the LM Studio models appear without a
+// restart.
+
+interface LmStudioServerStatus {
+  running: boolean
+  port: number
+  lms_present: boolean
+  models_detected: boolean
+  model_count: number
+}
+
+function LmStudioServerHint({ onStarted }: { onStarted: () => void }) {
+  const [status, setStatus] = useState<LmStudioServerStatus | null>(null)
+  const [starting, setStarting] = useState(false)
+  const [startError, setStartError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    backendCall<LmStudioServerStatus>('lmstudio_server_status')
+      .then(s => { if (!cancelled) setStatus(s) })
+      .catch(() => { /* not Tauri / endpoint missing → just don't render */ })
+    return () => { cancelled = true }
+  }, [])
+
+  // Render only when LM Studio is on disk but its server is off. If
+  // running, models are already in the list; if neither lms.exe nor any
+  // models are present, the user just doesn't have LM Studio.
+  const detected = !!status && (status.lms_present || status.models_detected)
+  if (!status || status.running || !detected) return null
+
+  const handleStart = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (starting) return
+    setStarting(true)
+    setStartError('')
+    try {
+      await backendCall('start_lmstudio_server')
+      // The CLI takes a second or two to bind 1234 — poll status
+      // briefly so the banner replaces itself with the models list
+      // instead of leaving the spinner spinning forever.
+      for (let i = 0; i < 8; i++) {
+        await new Promise(r => setTimeout(r, 750))
+        const fresh = await backendCall<LmStudioServerStatus>('lmstudio_server_status').catch(() => null)
+        if (fresh) {
+          setStatus(fresh)
+          if (fresh.running) {
+            onStarted()
+            break
+          }
+        }
+      }
+    } catch (e: any) {
+      setStartError(e?.message ? String(e.message).slice(0, 80) : 'Start failed')
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  return (
+    <div className="px-2.5 py-2 border-b border-white/[0.04] bg-amber-500/[0.05]">
+      <p className="text-[0.6rem] text-amber-200/85 leading-snug mb-1.5">
+        LM Studio is installed ({status.model_count} model{status.model_count === 1 ? '' : 's'} on disk) but its server isn't running. Start it to pick LM Studio models here.
+      </p>
+      <button
+        onClick={handleStart}
+        disabled={starting}
+        className="w-full flex items-center justify-center gap-1.5 px-2 py-1 rounded text-[0.62rem] bg-amber-500/[0.12] hover:bg-amber-500/[0.2] text-amber-100 transition-colors disabled:opacity-50"
+      >
+        {starting ? <Loader2 size={10} className="animate-spin" /> : <PlayCircle size={10} />}
+        <span>{starting ? 'Starting LM Studio server…' : 'Start LM Studio Server'}</span>
+      </button>
+      {startError && (
+        <p className="text-[0.55rem] text-red-300/70 mt-1 leading-snug">{startError}</p>
+      )}
+    </div>
+  )
+}
 
 // ── Badge configs ─────────────────────────────────────────────
 
@@ -209,6 +303,11 @@ export function ModelSelector() {
             exit={{ opacity: 0, y: -6, scale: 0.98 }}
             transition={{ duration: 0.12, ease: 'easeOut' }}
           >
+            {/* Bug Q v2.4.7 — surface "Start LM Studio Server" inline when
+                LM Studio is on disk but its server is off. wakeywakeynow's
+                "can't choose any models i have installed" symptom. */}
+            <LmStudioServerHint onStarted={fetchModels} />
+
             {/* Scrollable model list */}
             <div className="py-1 max-h-[280px] overflow-y-auto scrollbar-thin">
               {textModels.length === 0 && (

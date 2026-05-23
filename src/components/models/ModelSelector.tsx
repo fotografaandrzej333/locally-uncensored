@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronDown, Check, Loader2, Power, PlayCircle } from 'lucide-react'
+import { ChevronDown, Check, Loader2, Power, PlayCircle, X } from 'lucide-react'
 import { useModels } from '../../hooks/useModels'
 import { useModelStore } from '../../stores/modelStore'
 import { useProviderStore } from '../../stores/providerStore'
@@ -36,10 +36,20 @@ interface LmStudioServerStatus {
   model_count: number
 }
 
+// Session-scope dismiss flag. Lives at module-level on purpose: the
+// LmStudioServerHint component unmounts when the dropdown closes, so a
+// useState reset would resurface the hint on every reopen. Module
+// state survives unmount/remount within the same LU run, and resets to
+// false when the user relaunches LU (the module reloads from scratch).
+// Not persisted to localStorage so a forgotten-to-start server gets
+// flagged again next launch.
+let LM_HINT_DISMISSED_THIS_SESSION = false
+
 function LmStudioServerHint({ onStarted }: { onStarted: () => void }) {
   const [status, setStatus] = useState<LmStudioServerStatus | null>(null)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState('')
+  const [dismissed, setDismissed] = useState(LM_HINT_DISMISSED_THIS_SESSION)
 
   useEffect(() => {
     let cancelled = false
@@ -53,7 +63,7 @@ function LmStudioServerHint({ onStarted }: { onStarted: () => void }) {
   // running, models are already in the list; if neither lms.exe nor any
   // models are present, the user just doesn't have LM Studio.
   const detected = !!status && (status.lms_present || status.models_detected)
-  if (!status || status.running || !detected) return null
+  if (!status || status.running || !detected || dismissed) return null
 
   const handleStart = async (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -84,14 +94,22 @@ function LmStudioServerHint({ onStarted }: { onStarted: () => void }) {
   }
 
   return (
-    <div className="px-2.5 py-2 border-b border-white/[0.04] bg-amber-500/[0.05]">
-      <p className="text-[0.6rem] text-amber-200/85 leading-snug mb-1.5">
+    <div className="relative px-2.5 py-2 border-b border-white/[0.04] bg-white/[0.03]">
+      <button
+        onClick={(e) => { e.stopPropagation(); LM_HINT_DISMISSED_THIS_SESSION = true; setDismissed(true) }}
+        aria-label="Dismiss (returns on next launch)"
+        title="Dismiss (returns on next launch)"
+        className="absolute top-1 right-1 p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-white/[0.08] transition-colors"
+      >
+        <X size={10} />
+      </button>
+      <p className="text-[0.6rem] text-gray-300 leading-snug mb-1.5 pr-5">
         LM Studio is installed ({status.model_count} model{status.model_count === 1 ? '' : 's'} on disk) but its server isn't running. Start it to pick LM Studio models here.
       </p>
       <button
         onClick={handleStart}
         disabled={starting}
-        className="w-full flex items-center justify-center gap-1.5 px-2 py-1 rounded text-[0.62rem] bg-amber-500/[0.12] hover:bg-amber-500/[0.2] text-amber-100 transition-colors disabled:opacity-50"
+        className="w-full flex items-center justify-center gap-1.5 px-2 py-1 rounded text-[0.62rem] bg-white/[0.06] hover:bg-white/[0.12] text-gray-200 transition-colors disabled:opacity-50"
       >
         {starting ? <Loader2 size={10} className="animate-spin" /> : <PlayCircle size={10} />}
         <span>{starting ? 'Starting LM Studio server…' : 'Start LM Studio Server'}</span>

@@ -79,7 +79,19 @@ function ModelDiscoverCard({ model, index, isText, getModelDownloadState, isMode
 
           <div className="flex items-center gap-1 shrink-0">
             {isText && model.canPull === false ? (
-              <span className="text-xs text-green-500 px-2 py-1 rounded bg-green-500/10">Available</span>
+              <>
+                <span className="text-xs text-green-500 px-2 py-1 rounded bg-green-500/10">Available</span>
+                {model.url && (
+                  <button
+                    onClick={() => openExternal(model.url!)}
+                    className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-500 transition-all"
+                    title="View on HuggingFace"
+                    aria-label="View on HuggingFace"
+                  >
+                    <ExternalLink size={14} />
+                  </button>
+                )}
+              </>
             ) : isText && canDirectDownload ? (
               /* HuggingFace GGUF: direct download button */
               isComplete ? (
@@ -154,7 +166,15 @@ export function DiscoverModels({ category }: Props) {
   const providers = useProviderStore(s => s.providers)
   const hfOverride = useSettingsStore(s => s.settings.hfDownloadPathOverride)
   const [hfModelPath, setHfModelPath] = useState<string | null>(null)
-  const { pullModel } = useModels()
+  const { pullModel, models: installedModels, fetchModels } = useModels()
+
+  // Refresh installed-model list on mount + when category switches to text
+  // so the Discover grid reflects what Ollama / LM Studio actually have on
+  // disk (Bug #43: text-models never showed "Installed" because we only
+  // checked the in-memory download-store, which is empty after a restart).
+  useEffect(() => {
+    if (category === 'text') fetchModels().catch(() => {})
+  }, [category, fetchModels])
 
   // Auto-detect provider model path for GGUF downloads (user override wins).
   useEffect(() => {
@@ -246,10 +266,39 @@ export function DiscoverModels({ category }: Props) {
     ? vramFilteredBundles.filter((b) => b.name.toLowerCase().includes(search.toLowerCase()) || b.description.toLowerCase().includes(search.toLowerCase()))
     : vramFilteredBundles
 
-  // GGUF installed check: model is installed if download completed in this session
+  // Text-model installed check.
+  //
+  // Before v2.4.8 this only consulted the in-memory `downloads` store, so the
+  // INSTALLED badge disappeared the moment the user restarted the app — which
+  // is exactly what leonsk29 reported (GH #43). The store has no knowledge of
+  // what Ollama / LM Studio actually have on disk, only of downloads that
+  // happened in the current session.
+  //
+  // Fix: also match against the provider model list (which Ollama/LM Studio
+  // populate from disk). For HF GGUFs the in-app download goes through
+  // `ollama pull hf.co/<repo>:<quant>`, so the same canonical reference is
+  // what we look up in the installed-list. Session downloads remain a valid
+  // signal as the fastest-path (no fetchModels round-trip needed).
   const isModelFullyInstalled = (model: DiscoverModel) => {
-    if (!model.filename) return false
-    return downloads[model.filename]?.status === 'complete'
+    if (model.filename && downloads[model.filename]?.status === 'complete') return true
+
+    const installedOllamaTags = installedModels
+      .filter(m => m.provider === 'ollama')
+      .map(m => (m.model || m.name || '').toLowerCase())
+
+    if (model.ollamaModel) {
+      const tag = model.ollamaModel.toLowerCase()
+      if (installedOllamaTags.includes(tag)) return true
+      // Ollama appends `:latest` to bare model names — accept either form
+      if (!tag.includes(':') && installedOllamaTags.includes(`${tag}:latest`)) return true
+    }
+
+    if (model.filename && model.downloadUrl) {
+      const ref = hfUrlToOllamaRef(model.downloadUrl, model.filename)?.toLowerCase()
+      if (ref && installedOllamaTags.includes(ref)) return true
+    }
+
+    return false
   }
 
   const handleDownload = async (model: DiscoverModel) => {

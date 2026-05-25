@@ -7,6 +7,8 @@ import { useProviderStore } from '../../stores/providerStore'
 import { unloadAllModels } from '../../api/ollama'
 import { displayModelName } from '../../api/providers'
 import { backendCall } from '../../api/backend'
+import { listLoadedLmStudioModels, loadLmStudioModel, unloadLmStudioModel } from '../../api/lmstudio'
+import { isLmStudioProvider } from '../../lib/hf-to-provider'
 import { formatBytes } from '../../lib/formatters'
 import type { AIModel } from '../../types/models'
 
@@ -240,7 +242,58 @@ export function ModelSelector() {
   const [open, setOpen] = useState(false)
   const [unloading, setUnloading] = useState(false)
   const [unloadDone, setUnloadDone] = useState(false)
+  // B3 — per-model LM Studio load/unload state. `lmsLoaded` is the set
+  // of LM Studio model identifiers currently loaded in the server;
+  // `togglingLms` is the one we're flipping right now (drives the
+  // spinner on the row). LM Studio's HTTP server doesn't have load /
+  // unload endpoints, so we route through the `lms` CLI via the
+  // bridge's `lmstudio_load_model` / `lmstudio_unload_model` commands.
+  const [lmsLoaded, setLmsLoaded] = useState<Set<string>>(new Set())
+  const [togglingLms, setTogglingLms] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+
+  // Refresh LM Studio loaded-models snapshot whenever the dropdown
+  // opens. Cheap — single HTTP call. We don't poll while the dropdown
+  // is open because the user is about to click something anyway and
+  // staleness is at most a few seconds.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void listLoadedLmStudioModels().then((list) => {
+      if (cancelled) return
+      setLmsLoaded(new Set(list))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
+  /**
+   * Flip a LM Studio model between loaded / unloaded via the bridge.
+   * Refreshes the loaded set on success so the toggle reflects reality
+   * (the user might have multiple LM Studio models loaded already).
+   */
+  const toggleLmStudioLoad = async (model: AIModel) => {
+    const id = ('lmsKey' in model && typeof (model as any).lmsKey === 'string'
+      ? (model as any).lmsKey
+      : model.name) as string
+    if (!id || togglingLms) return
+    setTogglingLms(id)
+    try {
+      if (lmsLoaded.has(id)) {
+        await unloadLmStudioModel(id)
+      } else {
+        await loadLmStudioModel(id)
+      }
+      const list = await listLoadedLmStudioModels()
+      setLmsLoaded(new Set(list))
+    } catch {
+      // Best-effort: leave the previous snapshot in place; the user
+      // can re-open the dropdown to retry.
+    } finally {
+      setTogglingLms(null)
+    }
+  }
 
   useEffect(() => { fetchModels() }, [fetchModels])
 
@@ -392,6 +445,44 @@ export function ModelSelector() {
                             <span className="text-[8px] text-gray-600">
                               {(model as any).details.parameter_size}
                             </span>
+                          )}
+                          {/* B3 — LM Studio per-row power toggle. Click stops
+                              propagation so the row's setActiveModel doesn't
+                              fire. Ollama rows already get the inline-load
+                              treatment automatically when chat fires (no
+                              equivalent button needed); LM Studio needs an
+                              explicit load because the `lms` CLI is the only
+                              way in. */}
+                          {isLmStudioProvider(('providerName' in model && model.providerName) as string | undefined) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                void toggleLmStudioLoad(model)
+                              }}
+                              disabled={togglingLms !== null}
+                              title={
+                                lmsLoaded.has((('lmsKey' in model && typeof (model as any).lmsKey === 'string'
+                                  ? (model as any).lmsKey
+                                  : model.name) as string))
+                                  ? 'Loaded — click to unload from LM Studio'
+                                  : 'Click to load into LM Studio'
+                              }
+                              className={`p-0.5 rounded transition-colors ${
+                                lmsLoaded.has((('lmsKey' in model && typeof (model as any).lmsKey === 'string'
+                                  ? (model as any).lmsKey
+                                  : model.name) as string))
+                                  ? 'text-emerald-500 hover:bg-emerald-500/10'
+                                  : 'text-gray-500 hover:text-gray-300 hover:bg-white/[0.06]'
+                              } disabled:opacity-40`}
+                            >
+                              {togglingLms === (('lmsKey' in model && typeof (model as any).lmsKey === 'string'
+                                ? (model as any).lmsKey
+                                : model.name) as string) ? (
+                                <Loader2 size={10} className="animate-spin" />
+                              ) : (
+                                <Power size={10} />
+                              )}
+                            </button>
                           )}
                           {isActive && <Check size={11} className="text-blue-400" />}
                         </div>

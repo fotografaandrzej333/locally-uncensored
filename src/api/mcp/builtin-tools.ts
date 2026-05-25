@@ -909,7 +909,7 @@ async function executeImageGenerate(args: Record<string, any>): Promise<string> 
   if (!prompt) return 'Error: No prompt provided for image generation.'
   try {
     const { buildDynamicWorkflow } = await import('../dynamic-workflow')
-    const { submitWorkflow, getHistory, classifyModel, getImageModels } = await import('../comfyui')
+    const { submitWorkflow, getHistory, classifyModel, getImageModels, getImageUrl } = await import('../comfyui')
     const models = await getImageModels()
     if (models.length === 0) return 'Error: No image models available in ComfyUI.'
     const model = models[0]
@@ -926,7 +926,16 @@ async function executeImageGenerate(args: Record<string, any>): Promise<string> 
         const outputs = history.outputs ?? {}
         for (const nodeId of Object.keys(outputs)) {
           const files = [...(outputs[nodeId].images ?? []), ...(outputs[nodeId].gifs ?? [])]
-          if (files.length > 0) return `Image generated: ${files[0].filename} (prompt: "${prompt}")`
+          if (files.length > 0) {
+            // F1 (konata3602 commitment 2026-05-23) — embed the
+            // ComfyUI view URL in the result string so the chat UI
+            // (ToolCallBlock) can render an inline <img>. The agent
+            // sees BOTH a human-readable summary AND the URL — that
+            // way the model has the filename if it needs to reference
+            // the output later, and the user gets the picture inline.
+            const url = getImageUrl(files[0].filename, files[0].subfolder ?? '', 'output')
+            return `Image generated: ${files[0].filename} (prompt: "${prompt}")\n${url}`
+          }
         }
         return 'Generation completed but no output produced.'
       }

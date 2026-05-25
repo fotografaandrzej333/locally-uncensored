@@ -3,6 +3,15 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronDown, Search, Globe, FileText, FileEdit, Terminal, Image, Loader2, Check, X, Clock, AlertCircle, FolderOpen, Cpu, Monitor, GitBranch, Database } from 'lucide-react'
 import type { AgentToolCall } from '../../types/agent-mode'
 
+// F1 (konata3602 commitment 2026-05-23) — when image_generate / screenshot
+// produce an output URL the agent surfaces, we want the user to actually
+// SEE the picture rather than a path string. ComfyUI serves output via
+// http://localhost:8188/view?…; this regex pulls the URL out of the
+// result so we can render an <img> below the raw text. Only fires for
+// images we generated ourselves — third-party URLs in a tool result
+// must NOT be auto-loaded (CSP + privacy).
+const INLINE_IMAGE_RE = /(http:\/\/(?:localhost|127\.0\.0\.1):\d+\/view\?[^\s)\]]+)/i
+
 interface Props {
   toolCall: AgentToolCall
   onApprove?: () => void
@@ -85,9 +94,32 @@ export function ToolCallBlock({ toolCall, onApprove, onReject }: Props) {
 
               {/* Result */}
               {toolCall.result && (
-                <pre className="text-[0.55rem] leading-relaxed text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-white/[0.02] rounded px-2 py-1 overflow-auto scrollbar-thin max-h-[300px]">
-                  {toolCall.result}
-                </pre>
+                <>
+                  <pre className="text-[0.55rem] leading-relaxed text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-white/[0.02] rounded px-2 py-1 overflow-auto scrollbar-thin max-h-[300px]">
+                    {toolCall.result}
+                  </pre>
+                  {/* Inline image preview (F1) — only when the result
+                      contains a ComfyUI view URL. Bounded to localhost
+                      so we never auto-load arbitrary tool output. */}
+                  {(() => {
+                    const m = toolCall.result?.match(INLINE_IMAGE_RE)
+                    return m ? (
+                      <a
+                        href={m[1]}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block mt-1"
+                      >
+                        <img
+                          src={m[1]}
+                          alt="Generated image"
+                          className="max-w-full max-h-[320px] rounded border border-gray-200 dark:border-white/[0.06]"
+                          loading="lazy"
+                        />
+                      </a>
+                    ) : null
+                  })()}
+                </>
               )}
 
               {/* Error */}

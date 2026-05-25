@@ -35,6 +35,16 @@ export const DEFAULT_SETTINGS: Settings = {
   // Generation timeouts (Bug P v2.4.7)
   imageGenTimeoutMinutes: 20,
   videoGenTimeoutMinutes: 60,
+  // ── v2.5.0 Codex sprint A/B/C defaults (ported from uselu) ──────
+  codexArchitectMode: false,
+  codexArchitectModel: '',
+  // Local-first by default — explicit opt-in required for cloud arch.
+  codexArchitectAllowCloud: false,
+  codexRepoMapEnabled: false,
+  codexRepoMapLimit: 20,
+  codexStageMode: false,
+  codexReviewMode: false,
+  defaultWorkspace: null,
 }
 
 /** Caveman mode system prompt prefixes — credit: github.com/JuliusBrussee/caveman (MIT) */

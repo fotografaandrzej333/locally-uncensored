@@ -1,3 +1,5 @@
+import type { AgentWorkspace } from './agent-workspace'
+
 export type SearchProvider = 'auto' | 'brave' | 'tavily'
 
 export type CavemanMode = 'off' | 'lite' | 'full' | 'ultra'
@@ -33,6 +35,61 @@ export interface Settings {
   imageGenTimeoutMinutes: number
   /** Video generation timeout in minutes. Default 60. */
   videoGenTimeoutMinutes: number
+  // ── v2.5.0 Codex sprint A/B/C settings (ported from uselu) ──────
+  /**
+   * Codex Architect/Editor split. When on, a separate `codexArchitectModel`
+   * runs first to produce a structured plan (no tools, plan only); the
+   * regular Codex model then applies the plan with tool access. Aider-style
+   * — empirically ~30% better edit accuracy on multi-file refactors.
+   */
+  codexArchitectMode: boolean
+  /**
+   * Prefixed model name (e.g. `ollama::qwen-coder:32b`) used for the
+   * Architect pass when `codexArchitectMode` is true. Empty = fall back to
+   * the active Codex model. Local-first by design: the picker only
+   * surfaces non-local options when `codexArchitectAllowCloud` is true.
+   */
+  codexArchitectModel: string
+  /**
+   * Explicit opt-in to allow third-party cloud endpoints (Anthropic,
+   * OpenAI, OpenRouter) as the Architect model. Default false — forces
+   * the user to acknowledge that planning steps would leave the machine.
+   */
+  codexArchitectAllowCloud: boolean
+  /**
+   * Repo-Map pre-fetch. When on, Codex calls the bridge `repo_map` command
+   * before each turn and injects the top-N ranked files (PageRank over the
+   * import graph) into the editor system prompt.
+   */
+  codexRepoMapEnabled: boolean
+  /**
+   * Top-N cap for the injected repo map. Bigger maps eat more context;
+   * 20 is a balanced default for ~5k-file repos. Clamped to bridge's
+   * own [1, 200] range.
+   */
+  codexRepoMapLimit: number
+  /**
+   * Multi-File Stage-and-Approve. When on, Codex `file_write` calls don't
+   * touch the disk — they queue as "pending changes" the user reviews and
+   * applies (or rejects) per-file.
+   */
+  codexStageMode: boolean
+  /**
+   * Code-Review mode. When on, Codex runs read-only — every `file_write`
+   * and `shell_execute`-style call is blocked with a friendly message and
+   * the model is steered into "inline comments only" by a switched system
+   * prompt. Use for PR-pre-check runs where you do not want the agent
+   * touching anything.
+   */
+  codexReviewMode: boolean
+  /**
+   * Shared default workspace for Codex AND Agent (Underlying refactor —
+   * workspace unification). When set, both surfaces resolve relative paths
+   * against this folder by default; a per-chat override wins when present.
+   * Null = no default — keeps Agent prompting on first chat and Codex
+   * falling back to the per-thread cwd.
+   */
+  defaultWorkspace: AgentWorkspace | null
 }
 
 export interface Persona {

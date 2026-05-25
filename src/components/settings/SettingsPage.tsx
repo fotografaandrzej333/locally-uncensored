@@ -520,6 +520,80 @@ function ClaudeCodeSettings() {
   )
 }
 
+// ── Codex Agent (v2.5.0) Settings ───────────────────────────────
+
+function CodexAgentSettings() {
+  const { settings, updateSettings } = useSettingsStore()
+  return (
+    <div className="space-y-3">
+      <div className="text-[0.6rem] text-gray-500 leading-relaxed pb-1">
+        v2.5.0 codex / agent capabilities ported from the companion repo. All
+        local-first by default — cloud usage requires the explicit toggle below.
+      </div>
+
+      {/* Architect / Editor split */}
+      <InlineToggle
+        label="Architect / Editor split"
+        enabled={settings.codexArchitectMode}
+        onChange={() => updateSettings({ codexArchitectMode: !settings.codexArchitectMode })}
+      />
+      <div className="space-y-1 pl-1">
+        <label className="text-[0.6rem] text-gray-500 block">Architect model</label>
+        <input
+          type="text"
+          value={settings.codexArchitectModel}
+          onChange={(e) => updateSettings({ codexArchitectModel: e.target.value })}
+          disabled={!settings.codexArchitectMode}
+          placeholder="ollama::qwen-coder:32b"
+          className="w-full px-2 py-1 rounded bg-transparent border border-white/8 text-[0.65rem] text-gray-700 dark:text-gray-300 font-mono focus:outline-none focus:border-white/20 disabled:opacity-40"
+        />
+        <p className="text-[0.55rem] text-gray-500">Empty = use the active Codex model.</p>
+      </div>
+      <InlineToggle
+        label="Allow cloud architect models"
+        enabled={settings.codexArchitectAllowCloud}
+        onChange={() => updateSettings({ codexArchitectAllowCloud: !settings.codexArchitectAllowCloud })}
+        icon={<Shield size={10} className={settings.codexArchitectAllowCloud ? 'text-amber-400' : 'text-emerald-500'} />}
+      />
+      <p className="text-[0.55rem] text-gray-500 leading-relaxed pl-1">
+        Off keeps the architect step fully local. On allows third-party
+        endpoints (Anthropic, OpenAI, OpenRouter).
+      </p>
+
+      {/* Repo-Map */}
+      <div className="pt-1.5 border-t border-white/[0.04]" />
+      <InlineToggle
+        label="Repo-Map injection"
+        enabled={settings.codexRepoMapEnabled}
+        onChange={() => updateSettings({ codexRepoMapEnabled: !settings.codexRepoMapEnabled })}
+      />
+      <div className={settings.codexRepoMapEnabled ? '' : 'opacity-40 pointer-events-none'}>
+        <SliderControl
+          label="Repo-Map top-N files"
+          value={settings.codexRepoMapLimit}
+          min={1}
+          max={200}
+          step={1}
+          onChange={(v) => updateSettings({ codexRepoMapLimit: v })}
+        />
+      </div>
+
+      {/* Stage + Review */}
+      <div className="pt-1.5 border-t border-white/[0.04]" />
+      <InlineToggle
+        label="Stage file_write changes (review before apply)"
+        enabled={settings.codexStageMode}
+        onChange={() => updateSettings({ codexStageMode: !settings.codexStageMode })}
+      />
+      <InlineToggle
+        label="Code-Review mode (read-only)"
+        enabled={settings.codexReviewMode}
+        onChange={() => updateSettings({ codexReviewMode: !settings.codexReviewMode })}
+      />
+    </div>
+  )
+}
+
 // ── Main Component ──────────────────────────────────────────────
 
 // P5 settings refactor: Top-level tabs replace the previous flat scroll of
@@ -782,6 +856,12 @@ export function SettingsPage() {
           {FEATURE_FLAGS.AGENT_MODE && (
             <Section title="MCP Servers">
               <MCPServerSettings />
+            </Section>
+          )}
+
+          {FEATURE_FLAGS.AGENT_MODE && (
+            <Section title="Codex Agent (v2.5.0)">
+              <CodexAgentSettings />
             </Section>
           )}
 

@@ -23,9 +23,14 @@ export const DEFAULT_SETTINGS: Settings = {
   claudeCodeModel: '',
   claudeCodeAutoApprove: false,
   claudeCodePath: '',
-  // Agent budget (Phase 10 v2.4.0)
-  agentMaxToolCalls: 50,
-  agentMaxIterations: 25,
+  // Agent budget — bumped in v2.5.0 (uselu live-test 2026-05-25, commit
+  // 1af958b2): on a real scaffold-install-fix-verify loop with a 35B
+  // local model, 25 iterations / 50 tool calls fired the cap while the
+  // model still had useful work to do. 200 / 400 is roomy enough for
+  // multi-file refactors yet still bounded enough that a runaway loop
+  // surfaces in finite wall-clock.
+  agentMaxToolCalls: 400,
+  agentMaxIterations: 200,
   hfDownloadPathOverride: '',
   // Generation timeouts (Bug P v2.4.7)
   imageGenTimeoutMinutes: 20,

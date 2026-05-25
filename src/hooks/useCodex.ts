@@ -241,8 +241,12 @@ export function useCodex() {
     // AgentBudget also tracks tool calls and the iteration cap pulled
     // from settings. The legacy for-loop cap stays as the outer guard.
     const budget = budgetFromSettings({
-      agentMaxToolCalls: settings.agentMaxToolCalls ?? 50,
-      agentMaxIterations: settings.agentMaxIterations ?? 25,
+      // v2.5.0 (uselu live-test 1af958b2) — defaults bumped to 400 / 200.
+      // A real scaffold-install-fix-verify loop with a 35B local model
+      // fired the 50/25 cap while the model still had useful tool calls
+      // queued. Wall-clock still bounded by the AgentBudget timeouts.
+      agentMaxToolCalls: settings.agentMaxToolCalls ?? 400,
+      agentMaxIterations: settings.agentMaxIterations ?? 200,
     })
 
     try {
@@ -264,8 +268,11 @@ export function useCodex() {
       let echoRetriesRemaining = 3
       // Raised from 20 → 50 (v2.3.7): large refactors across 10+ files
       // legitimately need >20 tool calls. Budget still caps via
-      // agentMaxToolCalls/agentMaxIterations (defaults 50/25 from settings).
-      const MAX_CODEX_ITERATIONS = 50
+      // agentMaxToolCalls/agentMaxIterations.
+      // Raised again 50 → 200 (v2.5.0 — uselu live-test 1af958b2):
+      // scaffold-install-fix-verify on 35B local model legitimately
+      // needs 100+ iterations across multi-file refactors.
+      const MAX_CODEX_ITERATIONS = 200
       for (let i = 0; i < MAX_CODEX_ITERATIONS && runningRef.current && !abort.signal.aborted; i++) {
         budget.addIteration()
         const bx = budget.exceeded()

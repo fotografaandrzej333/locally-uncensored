@@ -166,7 +166,7 @@ export async function localFetchStream(
     log.warn('[localFetchStream] Direct fetch failed, trying Rust proxy', { err: String(directErr) });
   }
 
-  // Fallback in Tauri: Rust proxy collects all bytes (loses streaming).
+  // Fallback in Tauri: route through the Rust proxy.
   if (!isTauri()) {
     // Re-throw the original direct-fetch error if we are not in Tauri,
     // since there is no proxy to fall back to.
@@ -174,17 +174,44 @@ export async function localFetchStream(
   }
 
   const invoke = await getInvoke();
-  try {
-    const bytes = await invoke("proxy_localhost_stream", {
-      url,
-      method,
-      body: body || null,
-    }) as number[];
 
-    const uint8 = new Uint8Array(bytes);
-    return new Response(uint8, { status: 200, headers: { "Content-Type": "application/x-ndjson" } });
-  } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+  // STREAMING proxy (David 2026-06-02): the webview can't fetch Ollama directly
+  // — its origin is `http://tauri.localhost` and Ollama's CORS rejects it
+  // ("Failed to fetch"), so EVERY chat request lands here. The old path awaited
+  // the whole body (`bytes` buffered), so a long/slow generation produced
+  // NOTHING in the UI until fully done — a multi-minute "model loading" hang
+  // (dhasim Discord report). A Tauri Channel now forwards each chunk from Rust
+  // as it arrives, fed into a ReadableStream → real token-by-token streaming.
+  try {
+    const { Channel } = await import("@tauri-apps/api/core");
+    const channel = new Channel<number[]>();
+    let ctrl: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let closed = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) { ctrl = c; },
+    });
+    channel.onmessage = (chunk: number[]) => {
+      if (closed) return;
+      try { ctrl?.enqueue(new Uint8Array(chunk)); } catch { /* reader gone */ }
+    };
+    void invoke("proxy_localhost_stream_chunked", { url, method, body: body || null, onChunk: channel })
+      .then(() => { closed = true; try { ctrl?.close(); } catch { /* already closed */ } })
+      .catch((err: unknown) => { closed = true; try { ctrl?.error(err); } catch { /* already errored */ } });
+    return new Response(stream, { status: 200, headers: { "Content-Type": "application/x-ndjson" } });
+  } catch (chanErr) {
+    // Channel unavailable → legacy buffered proxy (still works, just not streamed).
+    log.warn('[localFetchStream] Channel stream unavailable, buffering via proxy', { err: String(chanErr) });
+    try {
+      const bytes = await invoke("proxy_localhost_stream", {
+        url,
+        method,
+        body: body || null,
+      }) as number[];
+      const uint8 = new Uint8Array(bytes);
+      return new Response(uint8, { status: 200, headers: { "Content-Type": "application/x-ndjson" } });
+    } catch (err) {
+      return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+    }
   }
 }
 

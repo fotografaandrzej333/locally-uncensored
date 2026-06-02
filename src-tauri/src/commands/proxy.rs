@@ -219,7 +219,9 @@ pub async fn proxy_localhost(
     resp.text().await.map_err(|e| e.to_string())
 }
 
-/// Streaming localhost proxy — returns raw bytes for streaming responses (Ollama pull/chat).
+/// Streaming localhost proxy — BUFFERS the whole body (no streaming). Kept for
+/// non-streaming callers (e.g. proxy-download). For chat, use the chunked variant
+/// below so a long generation doesn't look like a multi-minute "model loading" hang.
 #[tauri::command]
 pub async fn proxy_localhost_stream(url: String, method: Option<String>, body: Option<String>, state: tauri::State<'_, crate::state::AppState>) -> Result<Vec<u8>, String> {
     validate_proxy_url(&url, &state)?;
@@ -255,6 +257,71 @@ pub async fn proxy_localhost_stream(url: String, method: Option<String>, body: O
     }
 
     resp.bytes().await.map(|b| b.to_vec()).map_err(|e| e.to_string())
+}
+
+/// Chunked streaming localhost proxy for Ollama chat (David 2026-06-02).
+///
+/// The webview CANNOT fetch Ollama directly — its origin is `http://tauri.localhost`
+/// and Ollama's CORS rejects it ("TypeError: Failed to fetch"), so ALL chat traffic
+/// is routed through the proxy. The buffered `proxy_localhost_stream` awaits the
+/// ENTIRE body (2-hour timeout), so a long/slow generation produced NOTHING in the UI
+/// until fully finished — a multi-minute "model loading"/hang (dhasim Discord report).
+/// This variant forwards each chunk to the caller's `on_chunk` Channel as it arrives
+/// → true token-by-token streaming. (`Channel` must be a required arg — wrapping it in
+/// `Option` does not implement `Deserialize`, hence a separate command.)
+#[tauri::command]
+pub async fn proxy_localhost_stream_chunked(
+    url: String,
+    method: Option<String>,
+    body: Option<String>,
+    on_chunk: tauri::ipc::Channel<Vec<u8>>,
+    state: tauri::State<'_, crate::state::AppState>,
+) -> Result<(), String> {
+    validate_proxy_url(&url, &state)?;
+
+    let client = reqwest::Client::builder()
+        .user_agent("LocallyUncensored/2.0")
+        .timeout(std::time::Duration::from_secs(7200))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let http_method = method.unwrap_or_else(|| "GET".to_string());
+
+    let mut request = match http_method.as_str() {
+        "POST" => client.post(&url),
+        "DELETE" => client.delete(&url),
+        "PUT" => client.put(&url),
+        _ => client.get(&url),
+    };
+
+    if let Some(body_str) = body {
+        request = request.header("Content-Type", "application/json").body(body_str);
+    }
+
+    let resp = request
+        .send()
+        .await
+        .map_err(|e| format!("proxy_localhost_stream_chunked: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status, text));
+    }
+
+    use futures_util::StreamExt;
+    let mut stream = resp.bytes_stream();
+    while let Some(item) = stream.next().await {
+        let bytes = item.map_err(|e| e.to_string())?;
+        if bytes.is_empty() {
+            continue;
+        }
+        // If the JS side is gone (reader cancelled / window closed), stop.
+        if on_chunk.send(bytes.to_vec()).is_err() {
+            break;
+        }
+    }
+    Ok(())
 }
 
 /// Streaming Ollama model pull — emits per-model progress events.

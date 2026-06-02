@@ -194,6 +194,7 @@ fn main() {
             commands::proxy::fetch_external_bytes,
             commands::proxy::proxy_localhost,
             commands::proxy::proxy_localhost_stream,
+            commands::proxy::proxy_localhost_stream_chunked,
             commands::proxy::pull_model_stream,
             commands::proxy::cancel_model_pull,
             // B7 (uselu Phase 4 inspiration) — one-shot diagnostic probe

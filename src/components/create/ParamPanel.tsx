@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useCreateStore } from '../../stores/createStore'
 import { SliderControl } from '../settings/SliderControl'
 import { WorkflowFinder } from './WorkflowFinder'
-import { Dice5, Info, AlertTriangle, Film, ImageIcon, ImagePlus } from 'lucide-react'
+import { Dice5, AlertTriangle, Film, ImageIcon, ImagePlus } from 'lucide-react'
 import type { ClassifiedModel, ModelType } from '../../api/comfyui'
 import { snapToVideoGrid, isI2VModel, getLoraModels, getVAEModels } from '../../api/comfyui'
 
@@ -97,7 +97,6 @@ export function ParamPanel({ imageModels, videoModels, samplerList, schedulerLis
   }
 
   const activeModel = isVideo ? store.videoModel : store.imageModel
-  const videoDuration = isVideo ? (store.frames / store.fps).toFixed(1) : null
 
   return (
     <div className="space-y-3">
@@ -291,10 +290,6 @@ export function ParamPanel({ imageModels, videoModels, samplerList, schedulerLis
           <div className="grid grid-cols-2 gap-2">
             <SliderControl label="Frames" value={store.frames} min={1} max={81} step={4} onChange={store.setFrames} />
             <SliderControl label="FPS" value={store.fps} min={4} max={30} step={1} onChange={store.setFps} />
-          </div>
-          <div className="flex items-center gap-1 text-[10px] text-gray-500">
-            <Info size={10} />
-            ~{videoDuration}s ({store.frames}f @ {store.fps}fps)
           </div>
           {(store.width % 16 !== 0 || store.height % 16 !== 0) && (
             <button

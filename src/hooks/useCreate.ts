@@ -28,7 +28,7 @@ import { buildDynamicWorkflow, WorkflowUnavailableError, checkVideoOutputCapabil
 import { getAllNodeInfo } from '../api/comfyui-nodes'
 import { installCustomNodes } from '../api/discover'
 import { backendCall } from '../api/backend'
-import { useCreateStore, type GalleryItem } from '../stores/createStore'
+import { useCreateStore } from '../stores/createStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useWorkflowStore } from '../stores/workflowStore'
 import { injectParameters } from '../api/workflows'
@@ -454,7 +454,6 @@ export function useCreate() {
       if (useWS) {
         // ── WebSocket-driven progress ──
         await new Promise<void>((resolve, reject) => {
-          const startTime = Date.now()
           const store = useCreateStore.getState()
           store.setProgressPhase('queued')
           setProgress(10, 'Queued...')
@@ -481,13 +480,7 @@ export function useCreate() {
                 cleanup()
                 useCreateStore.getState().setProgressPhase('complete')
                 setProgress(95, 'Fetching results...')
-                const messages: [string, any][] = history.status?.messages ?? []
-                const startMsg = messages.find(([t]: [string, any]) => t === 'execution_start')
-                const endMsg = messages.find(([t]: [string, any]) => t === 'execution_success')
-                const comfyTime = startMsg?.[1]?.timestamp && endMsg?.[1]?.timestamp
-                  ? ((endMsg[1].timestamp - startMsg[1].timestamp) / 1000).toFixed(1) : null
                 setProgress(100, 'Complete!')
-                useCreateStore.getState().setLastGenTime(comfyTime ? `${comfyTime}s` : null)
                 const outputs = history.outputs ?? {}
                 let found = false
                 for (const nodeId of Object.keys(outputs)) {
@@ -534,7 +527,6 @@ export function useCreate() {
             // Only handle events for our prompt
             if ('prompt_id' in event.data && event.data.prompt_id !== promptId) return
 
-            const elapsed = Math.round((Date.now() - startTime) / 1000)
             const st = useCreateStore.getState()
 
             switch (event.type) {
@@ -547,19 +539,19 @@ export function useCreate() {
                 const classType = nodeClassMap.get(nodeId) || ''
                 if (LOADER_NODES.has(classType)) {
                   st.setProgressPhase('loading-model')
-                  setProgress(15, `Loading model... ${elapsed}s`)
+                  setProgress(15, 'Loading model...')
                 } else if (CLIP_LOADER_NODES.has(classType)) {
                   st.setProgressPhase('loading-clip')
-                  setProgress(25, `Loading text encoder... ${elapsed}s`)
+                  setProgress(25, 'Loading text encoder...')
                 } else if (VAE_LOADER_NODES.has(classType)) {
                   st.setProgressPhase('loading-vae')
-                  setProgress(30, `Loading VAE... ${elapsed}s`)
+                  setProgress(30, 'Loading VAE...')
                 } else if (SAMPLER_NODES.has(classType)) {
                   st.setProgressPhase('sampling')
-                  setProgress(35, `Sampling... ${elapsed}s`)
+                  setProgress(35, 'Sampling...')
                 } else if (DECODE_NODES.has(classType)) {
                   st.setProgressPhase('decoding')
-                  setProgress(90, `Decoding... ${elapsed}s`)
+                  setProgress(90, 'Decoding...')
                 }
                 break
               }
@@ -567,7 +559,7 @@ export function useCreate() {
                 const { value, max } = event.data
                 const stepPct = 35 + (value / max) * 55 // 35% to 90%
                 st.setProgressPhase('sampling')
-                setProgress(Math.round(stepPct), `Sampling step ${value}/${max}... ${elapsed}s`)
+                setProgress(Math.round(stepPct), `Sampling step ${value}/${max}`)
                 break
               }
               case 'execution_complete': {
@@ -579,13 +571,7 @@ export function useCreate() {
                 // Fetch history to get output files
                 getHistory(promptId).then(history => {
                   if (!history) { setError('No history found after completion.'); resolve(); return }
-                  const messages: [string, any][] = history.status?.messages ?? []
-                  const startMsg = messages.find(([t]) => t === 'execution_start')
-                  const endMsg = messages.find(([t]) => t === 'execution_success')
-                  const comfyTime = startMsg?.[1]?.timestamp && endMsg?.[1]?.timestamp
-                    ? ((endMsg[1].timestamp - startMsg[1].timestamp) / 1000).toFixed(1) : null
                   setProgress(100, 'Complete!')
-                  useCreateStore.getState().setLastGenTime(comfyTime ? `${comfyTime}s` : null)
                   const outputs = history.outputs ?? {}
                   let found = false
                   for (const nodeId of Object.keys(outputs)) {
@@ -661,24 +647,17 @@ export function useCreate() {
               }
             }
 
-            const elapsedSec = Math.round(elapsed / 1000)
             const expectedSteps = mode === 'video' ? steps * frames * 0.5 : steps * 2
             const pct = Math.min(10 + (attempts / expectedSteps * 85), 95)
 
             try {
               const history = await getHistory(promptId)
-              setProgress(pct, `Generating... ${elapsedSec}s elapsed`)
+              setProgress(pct, 'Generating...')
               if (!history) return
 
               if (history.status?.completed) {
                 if (pollRef.current) clearInterval(pollRef.current)
-                const messages: [string, any][] = history.status?.messages ?? []
-                const startMsg = messages.find(([t]) => t === 'execution_start')
-                const endMsg = messages.find(([t]) => t === 'execution_success')
-                const comfyTime = startMsg?.[1]?.timestamp && endMsg?.[1]?.timestamp
-                  ? ((endMsg[1].timestamp - startMsg[1].timestamp) / 1000).toFixed(1) : null
                 setProgress(100, 'Complete!')
-                useCreateStore.getState().setLastGenTime(comfyTime ? `${comfyTime}s` : null)
                 const outputs = history.outputs ?? {}
                 let found = false
                 for (const nodeId of Object.keys(outputs)) {

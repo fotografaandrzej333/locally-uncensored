@@ -7,9 +7,13 @@ import { useCreateStore, type GalleryItem } from '../../stores/createStore'
 import { MediaViewer } from './MediaViewer'
 
 export function OutputDisplay() {
-  const { isGenerating, progress, progressText, progressPhase, gallery, lastGenTime } = useCreateStore()
+  const { isGenerating, progress, progressText, progressPhase, gallery } = useCreateStore()
   const [viewerIndex, setViewerIndex] = useState<number | null>(null)
   const [copiedSeed, setCopiedSeed] = useState(false)
+  // Gate the result media's fade-in on its own load so a freshly-finished
+  // generation never shows a half-painted frame. Keyed by item id so it
+  // auto-resets when a new result arrives.
+  const [loadedId, setLoadedId] = useState<string | null>(null)
   const latest = gallery[0]
 
   const handleDownload = (item: GalleryItem) => {
@@ -98,11 +102,12 @@ export function OutputDisplay() {
             )}
           </div>
           <p className="text-gray-500 text-xs tracking-wide">{progressText || 'Generating...'}</p>
-          {/* Progress bar for sampling */}
-          {progressPhase === 'sampling' && progress > 0 && (
-            <div className="w-48 h-1 bg-gray-200 dark:bg-white/10 rounded-full overflow-hidden">
+          {/* Progress bar — shown for the whole run (loading → sampling →
+              decoding). Steps live in progressText above. No time estimates. */}
+          {progress > 0 && (
+            <div className="w-56 h-1 bg-gray-200 dark:bg-white/10 rounded-full overflow-hidden">
               <motion.div
-                className="h-full bg-green-400 rounded-full"
+                className="h-full rounded-full bg-[rgb(160,148,248)]"
                 initial={{ width: 0 }}
                 animate={{ width: `${Math.min(progress, 100)}%` }}
                 transition={{ duration: 0.3 }}
@@ -129,8 +134,10 @@ export function OutputDisplay() {
     )
   }
 
-  // Show latest result
-  const url = getImageUrl(latest.filename, latest.subfolder)
+  // Show latest result — stable URL (item's createdAt as cache token) so the
+  // element never refetches across re-renders.
+  const url = getImageUrl(latest.filename, latest.subfolder, 'output', latest.createdAt)
+  const ready = loadedId === latest.id
 
   return (
     <>
@@ -142,18 +149,25 @@ export function OutputDisplay() {
         >
           {latest.type === 'video' ? (
             <video
+              key={latest.id}
               src={url}
               controls
               autoPlay
               loop
-              className="max-w-full max-h-full rounded-xl border border-gray-200 dark:border-white/10 object-contain cursor-pointer"
+              playsInline
+              onLoadedData={() => setLoadedId(latest.id)}
+              className="max-w-full max-h-full rounded-xl border border-gray-200 dark:border-white/10 object-contain cursor-pointer bg-black"
+              style={{ opacity: ready ? 1 : 0, transition: 'opacity 0.25s ease-out' }}
               onClick={() => setViewerIndex(0)}
             />
           ) : (
             <img
+              key={latest.id}
               src={url}
               alt={latest.prompt}
+              onLoad={() => setLoadedId(latest.id)}
               className="max-w-full max-h-full rounded-xl border border-gray-200 dark:border-white/10 object-contain cursor-pointer"
+              style={{ opacity: ready ? 1 : 0, transition: 'opacity 0.25s ease-out' }}
               onClick={() => setViewerIndex(0)}
             />
           )}

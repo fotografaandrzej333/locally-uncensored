@@ -864,8 +864,16 @@ export async function uploadImage(file: File): Promise<string> {
   return data.name // ComfyUI returns { name, subfolder, type }
 }
 
-export function getImageUrl(filename: string, subfolder: string = '', type: string = 'output'): string {
-  return comfyuiUrl(`/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${type}&t=${Date.now()}`)
+export function getImageUrl(filename: string, subfolder: string = '', type: string = 'output', cacheBust?: string | number): string {
+  const path = `/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${type}`
+  // A cache-buster is appended ONLY when an explicit, STABLE token is supplied
+  // (e.g. a gallery item's immutable `createdAt`). We must never mint a fresh
+  // `Date.now()` per call: that returned a different URL on every React
+  // re-render, forcing the <img>/<video> to refetch mid-render — which is
+  // exactly what made the media viewer flicker while zooming/panning/loading.
+  // ComfyUI output filenames are unique per generation, so a per-item token is
+  // sufficient to defeat any rare filename-reuse cache collision.
+  return comfyuiUrl(cacheBust != null ? `${path}&t=${cacheBust}` : path)
 }
 
 // ─── Validate params ───

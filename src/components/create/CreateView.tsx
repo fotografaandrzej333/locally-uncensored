@@ -303,11 +303,10 @@ export function CreateView() {
     return () => clearInterval(id)
   }, [loadingStartedAt])
 
+  // nowTick (1s interval) is kept only to re-evaluate the 60s "taking too
+  // long" threshold below — no elapsed-seconds is shown to the user anymore.
   const loadingElapsedMs = loadingStartedAt ? nowTick - loadingStartedAt : 0
   const loadingTooLong = loadingElapsedMs > 60_000
-  const loadingElapsedLabel = loadingStartedAt
-    ? `${Math.floor(loadingElapsedMs / 1000)}s`
-    : ''
 
   const killStuckComfyui = async () => {
     setKilling(true)
@@ -563,7 +562,7 @@ export function CreateView() {
       {isStarting && !connected && !loadingTooLong && (
         <div className="flex items-center gap-2 px-4 py-2 bg-white/5 border-b border-white/5 text-gray-400 text-xs">
           <Loader2 size={12} className="animate-spin" />
-          <span>ComfyUI loading{loadingElapsedLabel ? ` (${loadingElapsedLabel})` : '...'}</span>
+          <span>ComfyUI loading...</span>
         </div>
       )}
       {isStarting && !connected && loadingTooLong && (
@@ -573,7 +572,7 @@ export function CreateView() {
               <div className="flex items-start gap-2 text-orange-300">
                 <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                 <div className="space-y-1">
-                  <p className="font-medium">ComfyUI is taking unusually long ({loadingElapsedLabel})</p>
+                  <p className="font-medium">ComfyUI is taking unusually long</p>
                   <p className="text-[10px] text-orange-200/70 leading-relaxed">
                     The process is alive but its web server hasn't responded. This usually means a CUDA / PyTorch wheel mismatch, an out-of-memory crash, or a custom-node import error. Check the startup logs below before restarting — they often name the failing module.
                   </p>

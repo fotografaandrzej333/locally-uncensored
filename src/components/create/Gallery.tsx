@@ -12,7 +12,6 @@ export function Gallery() {
   const { gallery, removeFromGallery, clearGallery } = useCreateStore()
   const [expanded, setExpanded] = useState(true)
   const [page, setPage] = useState(0)
-  const [selected, setSelected] = useState<GalleryItem | null>(null)
   const [viewerIndex, setViewerIndex] = useState<number | null>(null)
 
   if (gallery.length === 0) {
@@ -65,21 +64,17 @@ export function Gallery() {
             >
               <div className="flex gap-2 overflow-x-auto scrollbar-thin px-4 pb-3">
                 {visible.map((item, i) => {
-                  const url = getImageUrl(item.filename, item.subfolder)
+                  // Stable URL (item's createdAt token) → no per-render refetch.
+                  const url = getImageUrl(item.filename, item.subfolder, 'output', item.createdAt)
                   return (
                     <motion.div
                       key={item.id}
-                      className={`relative group shrink-0 cursor-pointer rounded-lg overflow-hidden border-2 transition-colors ${
-                        selected?.id === item.id ? 'border-purple-500' : 'border-transparent'
-                      }`}
+                      className="relative group shrink-0 cursor-pointer rounded-lg overflow-hidden border border-transparent hover:border-[rgba(160,148,248,0.6)] transition-colors"
                       initial={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
                       transition={{ delay: i * 0.02 }}
-                      onClick={() => {
-                        setSelected(selected?.id === item.id ? null : item)
-                        // Double-click opens viewer (single click selects)
-                      }}
-                      onDoubleClick={() => setViewerIndex(page * PAGE_SIZE + i)}
+                      onClick={() => setViewerIndex(page * PAGE_SIZE + i)}
+                      title="Open"
                     >
                       {item.type === 'video' ? (
                         <video
@@ -139,15 +134,6 @@ export function Gallery() {
                 </div>
               )}
 
-              {/* Selected item info */}
-              {selected && (
-                <div className="px-4 pb-2 flex items-center gap-2 text-xs text-gray-400">
-                  <span className="truncate flex-1">{selected.prompt}</span>
-                  <span>{selected.width}x{selected.height}</span>
-                  <span>Seed: {selected.seed}</span>
-                  <span>{selected.sampler}/{selected.scheduler}</span>
-                </div>
-              )}
             </motion.div>
           )}
         </AnimatePresence>

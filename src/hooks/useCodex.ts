@@ -82,7 +82,8 @@ Rules:
 - Always read a file before modifying it
 - Chain tool calls: after each tool result, if there is another step left, IMMEDIATELY call the next tool
 - If a command fails, diagnose and retry with a different approach — don't hand back to the user unless truly stuck
-- Be concise in text. All the work happens in tool calls.`
+- Be concise in text. All the work happens in tool calls.
+- FINISH with a short natural-language sentence summarising what you did or found. NEVER end your turn with only a raw JSON object or a bare code block — the user needs a human-readable answer, not a data dump.`
 
 // Local alias — the helper now lives in src/lib/ollama-stream-tools.ts
 // so useAgentChat can share the same wire protocol + arg-repair layer
@@ -673,10 +674,17 @@ export function useCodex() {
                 extractedFromContent = true
               }
             }
-            // When content was merely wrapping a tool call, drop the
-            // residual narrative so the assistant message doesn't become a
-            // stack of duplicated "I'm about to…" paragraphs.
-            if (extractedFromContent) turnContent = ''
+            // When the model bundles its tool-call JSON INSIDE the text
+            // (qwen2.5-coder & co.), KEEP the surrounding prose as this
+            // iteration's commentary — the JSON itself was already removed by
+            // stripRanges above. Keeping it (instead of clearing) is what makes
+            // every between-tool answer survive so the renderer can interleave
+            // them chronologically: tool → answer → tool → tool → answer …
+            // (David 2026-06-02 r2: "antworten zwischen drin verschwinden immer,
+            // darf nicht sein"). Older answers auto-collapse in the UI, so the
+            // old "stack of duplicated I'm-about-to paragraphs" problem is gone.
+            // Only drop it when nothing but punctuation/whitespace remains.
+            if (extractedFromContent && !/[A-Za-z0-9]/.test(turnContent)) turnContent = ''
           } else {
             // ── Non-streaming fallback for OpenAI/Anthropic providers ──
             let turn: { content: string; toolCalls: ToolCall[] }

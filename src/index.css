@@ -225,6 +225,30 @@ body {
   background: transparent;
 }
 
+/* ── Themed scrollbars via the STANDARD properties (David 2026-06-02 r2) ──
+   The `::-webkit-scrollbar` rules ABOVE were being IGNORED on every
+   `.scrollbar-thin` container: when `scrollbar-width: thin` is active (it is,
+   via the scrollbar-thin utility), Chromium/WebView2 (Edge 148) switches to
+   the STANDARD scrollbar and drops all -webkit- pseudo styling — falling back
+   to `scrollbar-color: auto`, i.e. the bare grey/white Windows scrollbar.
+   Setting `scrollbar-color` explicitly is the ONLY thing that themes it here.
+   `scrollbar-color` inherits, so the theme-root rules cover every pane. */
+.dark {
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+.light {
+  scrollbar-color: rgba(0, 0, 0, 0.24) transparent;
+}
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
+.dark .scrollbar-thin {
+  scrollbar-color: rgba(255, 255, 255, 0.24) transparent;
+}
+.light .scrollbar-thin {
+  scrollbar-color: rgba(0, 0, 0, 0.28) transparent;
+}
+
 /* Range slider */
 input[type="range"] {
   -webkit-appearance: none;

@@ -12,7 +12,7 @@ import { PluginsDropdown } from './PluginsDropdown'
 import { TypingIndicator } from './TypingIndicator'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { StagedChangesPanel } from './StagedChangesPanel'
-import { User, Code, Brain, Eye, GitBranch, Download, RefreshCw } from 'lucide-react'
+import { User, Code, Brain, Eye, GitBranch, Download, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { checkGitInstalled, openExternal, type GitStatus } from '../../api/backend'
 import { extractToolCallsWithRanges, stripRanges } from '../../lib/tool-call-repair'
@@ -22,6 +22,11 @@ function stripChannelTags(text: string): string {
     .replace(/<\|?channel>?\s*thought\s*/gi, '')
     .replace(/<\|?channel\|?>/gi, '')
     .replace(/<channel\|>/gi, '')
+  // ChatML / special-token delimiters. A degenerating local model can spew its
+  // own template tokens as content — qwen2.5-coder:14b emitted a burst of
+  // <|im_start|> mid-stream 2026-06-02. <|im_start|>, <|im_end|>, <|endoftext|>,
+  // <|assistant|> etc. are NEVER real answer text, so strip any <|word|> token.
+  t = t.replace(/<\|[a-z0-9_]+\|>/gi, '')
   // Display safety net (David 2026-06-02): the user must only ever see real
   // prose answers + the rendered tool-call BLOCKS — never raw tool-call JSON,
   // hermes orchestration tags, or our own continue-nudge echoed back as prose.
@@ -42,11 +47,64 @@ function stripChannelTags(text: string): string {
   //    working autonomously…") through the closing "finished and verified."
   //    so the orchestration sentence never reads as a real LLM answer.
   t = t.replace(/(?:please wait[,;:]?\s*(?:while\s+)?i\s+(?:will\s+)?)?continue working autonomously[\s\S]*?finished and verified\.?/gi, '')
+  // 3) Tool-call JSON the model emitted as CONTENT, PARSE-FREE. The structured
+  //    extractor below relies on JSON.parse via repairJson — which FAILS when
+  //    the model puts LITERAL newlines inside a string value (qwen2.5-coder:14b
+  //    emitted ```json {"name":"file_write","arguments":{"content":"line1<real
+  //    newline>line2"}}``` 2026-06-02), so that whole blob would leak as the
+  //    "answer". Strip it by pattern, no parsing:
+  //    (a) a fenced ```…``` block whose body is a "name"+"arguments" tool call.
+  t = t.replace(/```[a-z]*\s*\n?\s*\{[\s\S]*?["']name["']\s*:[\s\S]*?["']arguments["']\s*:[\s\S]*?```/gi, '')
+  //    (b) an unfenced / truncated {"name":"…","arguments": … blob — strip from
+  //        the header to end of text (a tool-call dump is never real prose, and
+  //        a truncated one has no clean close for the brace-balancer to find).
+  t = t.replace(/\{\s*["']?(?:name|tool|function)["']?\s*:\s*["'][a-z0-9_]+["']\s*,\s*["']?(?:arguments|args|parameters|input)["']?\s*:[\s\S]*$/i, '')
   try {
     const { ranges } = extractToolCallsWithRanges(t)
     if (ranges.length) t = stripRanges(t, ranges)
   } catch { /* ignore — never let a strip error hide the answer */ }
   return t.trim()
+}
+
+// A single between-tool answer. The LATEST answer renders expanded; OLDER
+// answers auto-collapse to a one-line preview as soon as a newer answer
+// arrives, yet stay visible + clickable to re-expand (David 2026-06-02 r2:
+// "jede antwort … soll auch zu sehen bleiben, aber einklappen sobald eine
+// neue antwort da ist"). `isLatest` is recomputed every render from the block
+// timestamps, so the previously-latest answer flips to collapsed on its own
+// the moment a new answer block appears — no effect/cleanup needed.
+function CollapsibleAnswer({ content, isLatest }: { content: string; isLatest: boolean }) {
+  const [override, setOverride] = useState<boolean | null>(null)
+  const expanded = override === null ? isLatest : override
+  if (expanded) {
+    return (
+      <div className="px-1 py-0.5">
+        {!isLatest && (
+          <button
+            onClick={() => setOverride(false)}
+            className="flex items-center gap-1 mb-0.5 text-[0.65rem] text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
+            title="Collapse this answer"
+          >
+            <ChevronDown size={10} /> collapse
+          </button>
+        )}
+        <div className="text-[0.75rem] leading-relaxed">
+          <MarkdownRenderer content={content} />
+        </div>
+      </div>
+    )
+  }
+  const preview = content.replace(/\s+/g, ' ').trim()
+  return (
+    <button
+      onClick={() => setOverride(true)}
+      className="group flex items-center gap-1.5 w-full text-left px-1 py-0.5 text-[0.7rem] text-gray-400 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
+      title="Show this answer"
+    >
+      <ChevronRight size={11} className="shrink-0 opacity-70 group-hover:opacity-100" />
+      <span className="truncate italic">{preview.slice(0, 96)}{preview.length > 96 ? '…' : ''}</span>
+    </button>
+  )
 }
 
 export function CodexView() {
@@ -219,38 +277,46 @@ export function CodexView() {
                               (b) => b.phase === 'answer' && b.content.trim(),
                             )
                             if (hasAnswerBlock) {
+                              // Interleave tool_call + answer blocks strictly by
+                              // timestamp so the transcript reads tool → answer →
+                              // tool → tool → answer … in the real order the
+                              // model produced them — provider/LLM-agnostic
+                              // (David 2026-06-02 r2). Drop answer blocks that
+                              // strip to empty so they can't be the "latest".
+                              const ordered = [...msg.agentBlocks!]
+                                .filter(
+                                  (b) =>
+                                    (b.phase === 'tool_call' && b.toolCall) ||
+                                    (b.phase === 'answer' && stripChannelTags(b.content)),
+                                )
+                                .sort((a, b) => a.timestamp - b.timestamp)
+                              // The newest answer stays expanded; all earlier
+                              // answers auto-collapse (CollapsibleAnswer).
+                              const answerIds = ordered
+                                .filter((b) => b.phase === 'answer')
+                                .map((b) => b.id)
+                              const latestAnswerId = answerIds.length
+                                ? answerIds[answerIds.length - 1]
+                                : null
                               return (
                                 <div className="space-y-1">
-                                  {[...msg.agentBlocks!]
-                                    .filter(
-                                      (b) =>
-                                        (b.phase === 'tool_call' && b.toolCall) ||
-                                        (b.phase === 'answer' && b.content.trim()),
-                                    )
-                                    .sort((a, b) => a.timestamp - b.timestamp)
-                                    .map((block) => {
-                                      if (block.phase === 'tool_call' && block.toolCall) {
-                                        return (
-                                          <ToolCallBlock key={block.id} toolCall={block.toolCall} />
-                                        )
-                                      }
-                                      if (block.phase === 'answer' && block.content.trim()) {
-                                        // Strip FIRST: if the block was only a
-                                        // parroted nudge / hallucinated tool tag,
-                                        // it strips to empty — render nothing
-                                        // rather than an empty bubble.
-                                        const answer = stripChannelTags(block.content)
-                                        if (!answer) return null
-                                        return (
-                                          <div key={block.id} className="px-1 py-0.5">
-                                            <div className="text-[0.75rem] leading-relaxed">
-                                              <MarkdownRenderer content={answer} />
-                                            </div>
-                                          </div>
-                                        )
-                                      }
-                                      return null
-                                    })}
+                                  {ordered.map((block) => {
+                                    if (block.phase === 'tool_call' && block.toolCall) {
+                                      return <ToolCallBlock key={block.id} toolCall={block.toolCall} />
+                                    }
+                                    if (block.phase === 'answer') {
+                                      const answer = stripChannelTags(block.content)
+                                      if (!answer) return null
+                                      return (
+                                        <CollapsibleAnswer
+                                          key={block.id}
+                                          content={answer}
+                                          isLatest={block.id === latestAnswerId}
+                                        />
+                                      )
+                                    }
+                                    return null
+                                  })}
                                 </div>
                               )
                             }

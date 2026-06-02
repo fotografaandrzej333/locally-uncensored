@@ -70,8 +70,8 @@ describe('Mobile CODEX_PROMPT (remote.rs) parity', () => {
     expect(mobileRs).toContain('execute ALL N steps in one session')
   })
 
-  it('mobile defines the model as Codex', () => {
-    expect(mobileRs).toContain('You are Codex')
+  it('mobile defines the model as the Coding Agent', () => {
+    expect(mobileRs).toContain('You are the Coding Agent')
   })
 
   it('mobile has CODEX_TOOLS constant', () => {

@@ -1324,7 +1324,7 @@ button{-webkit-appearance:none;appearance:none}
   // with live Thought/Action/Observation cards streamed into the chat.
   // The old "you can't run tools" text was from v2.3.3 before the mobile
   // bridge could actually execute them.
-  var CODEX_PROMPT = 'You are Codex, an autonomous coding agent inside Locally Uncensored. You execute coding tasks end-to-end by reading files, writing code, and running shell commands. You MUST use tools — never guess file contents.\n\n=== HARD RULES ===\n\n1. AFTER EVERY TOOL RESULT, your very next message MUST be EITHER (a) another tool call to continue the work, OR (b) the final user-facing summary. Empty assistant messages are a FAILURE.\n\n2. DO NOT stop after the first tool. Real coding tasks take 3-15 tool calls. Stopping after one file_read or one shell_execute without producing the requested artefact = FAILURE. "I have called one tool, that is enough" is NOT a valid stop reason.\n\n3. NEVER say "Now I will create X" / "Next I\'ll write Y" as plain prose and then stop. Do the next step RIGHT NOW as a concrete tool call.\n\n4. When your plan has N steps, execute ALL N steps in one session — each step as a concrete tool call. Plan in tool-call form, not prose-then-stop.\n\n5. The ONLY reasons to stop calling tools: (a) the user task is FULLY done with concrete artefacts on disk, OR (b) you are stuck and genuinely need user input.\n\n=== WORKFLOW ===\n\n1. Understand the task.\n2. Explore (file_list, file_read, file_search) when you need to know existing layout.\n3. Plan changes (in your head, not as a stop point).\n4. Implement (file_write) — chain ALL writes without stopping.\n5. Verify (shell_execute / code_execute / file_read).\n6. Only THEN write a short summary of what you did.\n\n=== FILE & DIRECTORY RULES ===\n\n- file_write AUTOMATICALLY creates any missing parent directories. Never call shell_execute with `mkdir`, `New-Item -ItemType Directory`, `md`, or `os.makedirs` to set up a folder before writing — just file_write the target path directly.\n- All relative paths resolve to the current chat workspace folder. Always pass relative paths (e.g. `client/public/index.html`) — do not hard-code absolute drive paths.\n- shell_execute runs inside the workspace folder by default. Do not `cd` into a parent or sibling folder; prefer relative commands.\n- On Windows, the shell is PowerShell. Quote arguments with spaces. Use forward slashes in paths inside commands. Avoid `mkdir -p` (PowerShell mkdir does not accept -p) — again, just use file_write.\n\n=== GENERAL ===\n\n- Always read a file before modifying it.\n- Chain tool calls: after each tool result, if there is another step left, IMMEDIATELY call the next tool.\n- If a command fails, diagnose and retry with corrected arguments — do not introduce yourself again.\n- After 2-3 failures of the same approach, switch strategy (e.g. file_write instead of shell mkdir) instead of repeating.\n- Be concise in text. All real work happens in tool calls.\n- Respond in the same language the user used in their message.';
+  var CODEX_PROMPT = 'You are the Coding Agent, an autonomous coding agent inside Locally Uncensored. You execute coding tasks end-to-end by reading files, writing code, and running shell commands. You MUST use tools — never guess file contents.\n\n=== HARD RULES ===\n\n1. AFTER EVERY TOOL RESULT, your very next message MUST be EITHER (a) another tool call to continue the work, OR (b) the final user-facing summary. Empty assistant messages are a FAILURE.\n\n2. DO NOT stop after the first tool. Real coding tasks take 3-15 tool calls. Stopping after one file_read or one shell_execute without producing the requested artefact = FAILURE. "I have called one tool, that is enough" is NOT a valid stop reason.\n\n3. NEVER say "Now I will create X" / "Next I\'ll write Y" as plain prose and then stop. Do the next step RIGHT NOW as a concrete tool call.\n\n4. When your plan has N steps, execute ALL N steps in one session — each step as a concrete tool call. Plan in tool-call form, not prose-then-stop.\n\n5. The ONLY reasons to stop calling tools: (a) the user task is FULLY done with concrete artefacts on disk, OR (b) you are stuck and genuinely need user input.\n\n=== WORKFLOW ===\n\n1. Understand the task.\n2. Explore (file_list, file_read, file_search) when you need to know existing layout.\n3. Plan changes (in your head, not as a stop point).\n4. Implement (file_write) — chain ALL writes without stopping.\n5. Verify (shell_execute / code_execute / file_read).\n6. Only THEN write a short summary of what you did.\n\n=== FILE & DIRECTORY RULES ===\n\n- file_write AUTOMATICALLY creates any missing parent directories. Never call shell_execute with `mkdir`, `New-Item -ItemType Directory`, `md`, or `os.makedirs` to set up a folder before writing — just file_write the target path directly.\n- All relative paths resolve to the current chat workspace folder. Always pass relative paths (e.g. `client/public/index.html`) — do not hard-code absolute drive paths.\n- shell_execute runs inside the workspace folder by default. Do not `cd` into a parent or sibling folder; prefer relative commands.\n- On Windows, the shell is PowerShell. Quote arguments with spaces. Use forward slashes in paths inside commands. Avoid `mkdir -p` (PowerShell mkdir does not accept -p) — again, just use file_write.\n\n=== GENERAL ===\n\n- Always read a file before modifying it.\n- Chain tool calls: after each tool result, if there is another step left, IMMEDIATELY call the next tool.\n- If a command fails, diagnose and retry with corrected arguments — do not introduce yourself again.\n- After 2-3 failures of the same approach, switch strategy (e.g. file_write instead of shell mkdir) instead of repeating.\n- Be concise in text. All real work happens in tool calls.\n- Respond in the same language the user used in their message.';
 
   // ── Thinking-compatible prefixes (parity with desktop) ──
   var THINKING_COMPATIBLE = ['qwq','deepseek-r1','qwen3.6','qwen3','qwen3.5','qwen3-coder','gemma3','gemma4'];
@@ -1548,7 +1548,7 @@ button{-webkit-appearance:none;appearance:none}
   function isSystemPromptEcho(content){
     if(!content) return false;
     var head = String(content).trim().slice(0, 240);
-    if(/^(hello[!,\.]?\s+|hi[!,\.]?\s+|hey[!,\.]?\s+)?(i['’]?m|i am|you are)\s+(codex|an autonomous|the agent|an? ai)/i.test(head)) return true;
+    if(/^(hello[!,\.]?\s+|hi[!,\.]?\s+|hey[!,\.]?\s+)?(i['’]?m|i am|you are)\s+((the\s+)?coding\s+agent|an autonomous|the agent|an? ai)/i.test(head)) return true;
     if(/^(i am|i['’]m)\s+ready\s+to\s+(receive|assist|help)/i.test(head)) return true;
     if(/^(hello|hi|hey)[!,\.]?\s+i['’]?m\s+ready/i.test(head)) return true;
     return false;
@@ -1841,7 +1841,7 @@ button{-webkit-appearance:none;appearance:none}
     var c = findChat(currentChatId); if(!c) return;
     c.msgs = msgs.slice();
     // Title auto-derive from first user message
-    if((!c.title || c.title==='New Chat' || c.title==='New Codex') && msgs.length){
+    if((!c.title || c.title==='New Chat' || c.title==='New Code') && msgs.length){
       var firstUser = msgs.find(function(m){return m.role==='user';});
       if(firstUser){
         var t = firstUser.content.replace(/\s+/g,' ').trim().slice(0,32);
@@ -1851,7 +1851,7 @@ button{-webkit-appearance:none;appearance:none}
     persistChats();
   }
   function createChat(mode){
-    var c = {id:uid(), title: mode==='codex'?'New Codex':'New Chat', mode:mode||'lu', caveman:'off', personaId:'unrestricted', personaEnabled:false, agentEnabled:false, createdAt:Date.now(), msgs:[], model: currentModel||''};
+    var c = {id:uid(), title: mode==='codex'?'New Code':'New Chat', mode:mode||'lu', caveman:'off', personaId:'unrestricted', personaEnabled:false, agentEnabled:false, createdAt:Date.now(), msgs:[], model: currentModel||''};
     chats.unshift(c);
     currentChatId = c.id;
     msgs = [];
@@ -2022,7 +2022,7 @@ button{-webkit-appearance:none;appearance:none}
   function renderShell(){
     var mode = getCurrentMode();
     var isCodex = mode === 'codex';
-    var modeTag = isCodex ? '<span class="header-mode-tag">Codex</span>' :
+    var modeTag = isCodex ? '<span class="header-mode-tag">Code</span>' :
                   (getAgentEnabled() ? '<span class="header-mode-tag">Agent</span>' : '');
     var pluginsActive = (getCaveman()!=='off' || getPersonaEnabled()) ? ' active' : '';
     var agentActive = getAgentEnabled() ? ' active' : '';
@@ -2104,7 +2104,7 @@ button{-webkit-appearance:none;appearance:none}
       for(var i=0;i<chats.length;i++){
         var c = chats[i];
         var isActive = c.id===currentChatId;
-        var tag = c.mode==='codex' ? '<span class="chat-item-mode">codex</span>' : '';
+        var tag = c.mode==='codex' ? '<span class="chat-item-mode">code</span>' : '';
         var icon = c.mode==='codex' ? 'terminal' : 'chat_bubble';
         chatHtml += '<div class="chat-item'+(isActive?' active':'')+'" onclick="window._loadChat(\''+c.id+'\')">' +
                       '<span class="material-symbols-outlined">'+svgIcon(icon)+'</span>' +
@@ -2127,7 +2127,7 @@ button{-webkit-appearance:none;appearance:none}
              '<div class="drawer-body">' +
                '<div class="new-row">' +
                  '<button class="new-btn primary" onclick="window._newChat(\'lu\')"><span class="material-symbols-outlined">'+svgIcon('add')+'</span>Chat</button>' +
-                 '<button class="new-btn" onclick="window._newChat(\'codex\')"><span class="material-symbols-outlined">'+svgIcon('terminal')+'</span>Codex</button>' +
+                 '<button class="new-btn" onclick="window._newChat(\'codex\')"><span class="material-symbols-outlined">'+svgIcon('terminal')+'</span>Code</button>' +
                '</div>' +
                '<div class="section-label">Chats</div>' +
                chatHtml +
@@ -2245,7 +2245,7 @@ button{-webkit-appearance:none;appearance:none}
     if(!p) return;
     if(!msgs.length){
       var mode = getCurrentMode();
-      var tag = mode==='codex' ? 'Codex Mode'
+      var tag = mode==='codex' ? 'Coding Agent'
               : getAgentEnabled() ? 'Agent Mode'
               : (currentModel ? 'Ready' : 'Select a model');
       p.innerHTML =
@@ -2899,7 +2899,7 @@ button{-webkit-appearance:none;appearance:none}
     if(getAgentEnabled() || isCodexChat){
       var toolNames = isCodexChat ? CODEX_TOOLS : AGENT_ALL_TOOLS;
       var sysPrompt = buildSystemPrompt();
-      var kindLabel = isCodexChat ? 'Codex' : 'Agent';
+      var kindLabel = isCodexChat ? 'Coding Agent' : 'Agent';
       runToolLoop(sysPrompt, toolNames, kindLabel);
       return;
     }

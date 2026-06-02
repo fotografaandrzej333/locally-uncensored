@@ -27,7 +27,7 @@ type CavemanMode = 'off' | keyof typeof CAVEMAN_PROMPTS
 interface ChatMessage { role: 'user' | 'assistant' | 'system'; content: string; images?: { data: string; mimeType: string }[] }
 interface MobileChat { id: string; mode: 'lu' | 'codex'; caveman: CavemanMode; personaId: string; personaEnabled: boolean }
 
-const CODEX_PROMPT_SNIPPET = 'You are Codex, a coding-focused assistant'
+const CODEX_PROMPT_SNIPPET = 'You are the Coding Agent, a coding-focused assistant'
 
 function buildSystemPrompt(chat: MobileChat, opts: { dispatched?: string; personas: { id: string; prompt: string }[] }): string {
   const parts: string[] = []

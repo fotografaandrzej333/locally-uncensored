@@ -143,7 +143,7 @@ describe('mobile_landing HTML › caveman/persona/codex content', () => {
   })
 
   it('has codex prompt snippet', () => {
-    expect(html).toContain('You are Codex')
+    expect(html).toContain('You are the Coding Agent')
   })
 
   it('embeds the No Filter default persona', () => {

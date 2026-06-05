@@ -11,7 +11,11 @@ import { DEFAULT_SETTINGS, BUILT_IN_PERSONAS } from '../lib/constants'
 // v6 (uselu design port): added settings.personasEnabled (master persona
 // switch, default true). Bumped so existing users get the default ON instead
 // of an undefined → falsy "personas off" surprise.
-const STORE_VERSION = 6
+// v7 (Small-Model Mode v2.5.0): added settings.smallModelMode (lean profile
+// for 3B-8B local models, default false). Same additive merge path below
+// ({ ...DEFAULT_SETTINGS, ...persisted.settings }) fills the new default in
+// while preserving every existing user value — existing users get it OFF.
+const STORE_VERSION = 7
 
 interface SettingsState {
   settings: Settings

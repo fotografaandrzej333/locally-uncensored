@@ -16,6 +16,18 @@ export interface Settings {
    *  prompt (raw model). Default true. Ported from the uselu web companion. */
   personasEnabled: boolean
   thinkingEnabled: boolean
+  /**
+   * Small-Model Mode (v2.5.0). Evidence-backed lean profile that maximises
+   * tool-call reliability + context retention on small local models (3B-8B,
+   * e.g. gemma4:e4b, Llama-3.2-3B, Qwen3-8B). When on it flips: a tighter
+   * tool cap + embedding-routing (Knob 1), a lean system prompt (Knob 2),
+   * tool-output truncation (Knob 3), and aggressive history compaction
+   * (Knob 4). It deliberately does NOT lower num_ctx — research found the
+   * num_ctx-as-ceiling fear is largely a myth; the real lever is keeping the
+   * actual prompt short (see finding_small_model_tool_calling_research).
+   * Default false (big models are unaffected). Manual knob, not auto-forced.
+   */
+  smallModelMode: boolean
   cavemanMode: CavemanMode
   searchProvider: SearchProvider
   braveApiKey: string

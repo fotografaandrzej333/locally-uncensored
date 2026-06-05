@@ -35,6 +35,7 @@ import { WorkflowEngine } from '../lib/workflow-engine'
 import type { AgentBlock, AgentToolCall, OllamaChatMessage } from '../types/agent-mode'
 import { selectRelevantTools, selectRelevantToolsAsync } from '../lib/tool-selection'
 import { generateEmbeddings } from '../api/rag'
+import { truncateToolResult } from '../lib/truncate-tool-result'
 import { budgetFromSettings } from '../api/agents/budget'
 import type { ChatMessage, ToolCall, ToolDefinition } from '../api/providers/types'
 import type { StepResult, WorkflowEngineCallbacks } from '../types/agent-workflows'
@@ -376,9 +377,14 @@ export function useAgentChat() {
 
     // Build agent system prompt FIRST, then append caveman style as a modifier
     const hermesToolDefs = toolRegistry.toHermesToolDefs(permissions)
+    // Small-Model Mode (Knob 2): swap the ~3000-char agent prompt for a lean
+    // ~750-char one on the native path. The Hermes-XML branch already uses a
+    // tight tool prompt (buildHermesToolPrompt), so it stays as-is.
     let agentSystemPrompt = strategy === 'hermes_xml'
       ? buildHermesToolPrompt(hermesToolDefs) + (systemPrompt ? `\n\n${systemPrompt}` : '')
-      : buildAgentSystemPrompt(systemPrompt)
+      : settings.smallModelMode
+        ? buildAgentSystemPromptLean(systemPrompt)
+        : buildAgentSystemPrompt(systemPrompt)
 
     // Multi-Repo (Sprint C #8): when the agent workspace has extra paths,
     // append a "Workspaces" section so the model can reference them by
@@ -528,7 +534,11 @@ export function useAgentChat() {
           } catch { /* keep the 8192 floor on failure */ }
         }
         const chatOptions = {
-          temperature: settings.temperature,
+          // Small-Model Mode (Knob 6): gently clamp temperature for tool turns.
+          // FOLKLORE, not measured — research found NO temperature finding for
+          // tool-calling. A low, low-entropy setting is *plausible* for valid
+          // tool-call JSON, so we cap downward (never raise) rather than force.
+          temperature: settings.smallModelMode ? Math.min(settings.temperature, 0.3) : settings.temperature,
           topP: settings.topP,
           topK: settings.topK,
           maxTokens: settings.maxTokens || undefined,
@@ -543,9 +553,14 @@ export function useAgentChat() {
         // trim to the model's full context (e.g. 128k) while Ollama only has the
         // capped num_ctx allocated — that mismatch caused prompt overflow.
         const maxCtx = agentCtx
+        // Small-Model Mode (Knob 4): keep the REAL prompt short (the true lever,
+        // NOT num_ctx) — tighter ratio + an absolute cap.
+        const compactBudget = settings.smallModelMode
+          ? Math.floor(Math.min(maxCtx * 0.5, 6000))
+          : Math.floor(maxCtx * 0.8)
         agentMessages = compactMessages(
           agentMessages as OllamaChatMessage[],
-          Math.floor(maxCtx * 0.8)
+          compactBudget
         ) as ChatMessage[]
 
         if (strategy === 'native') {
@@ -561,11 +576,17 @@ export function useAgentChat() {
           // (Phase 9). The embedding call is best-effort: if Ollama is
           // unreachable it silently falls back to keyword-only.
           const lastUserMsg = agentMessages.filter(m => m.role === 'user').pop()?.content || ''
+          // Small-Model Mode (Knob 1): tighten the tool cap and force the
+          // embedding router even on a modest catalog (threshold 6) so a 3B-8B
+          // model sees ≤6 semantically-ranked tools. Default mode keeps the
+          // permissive selection unchanged for big models.
           const relevantDefs = await selectRelevantToolsAsync(
             lastUserMsg,
             toolRegistry.getAll(),
             permissions,
-            { embed: (texts) => generateEmbeddings(texts) }
+            settings.smallModelMode
+              ? { embed: (texts) => generateEmbeddings(texts), topN: 5, embeddingThreshold: 6, maxTools: 6 }
+              : { embed: (texts) => generateEmbeddings(texts) }
           )
           const tools: ToolDefinition[] = relevantDefs.map(t => ({
             type: 'function' as const,
@@ -1033,10 +1054,18 @@ export function useAgentChat() {
         //   kept per-call for compatibility with how the non-native path
         //   parses history.
         const resultTextFor = (r: typeof results[number]): string => {
-          if (r.status === 'rejected') return 'User rejected this action. Try a different approach.'
-          if (r.status === 'completed' || r.status === 'cached') return r.result ?? ''
-          // failed
-          return r.errorHint ? `${r.error ?? 'Tool failed'} — ${r.errorHint}` : (r.error ?? 'Tool failed')
+          const text =
+            r.status === 'rejected'
+              ? 'User rejected this action. Try a different approach.'
+              : r.status === 'completed' || r.status === 'cached'
+                ? (r.result ?? '')
+                : r.errorHint
+                  ? `${r.error ?? 'Tool failed'} — ${r.errorHint}`
+                  : (r.error ?? 'Tool failed')
+          // Small-Model Mode (Knob 3): truncate long tool outputs (head+tail)
+          // before re-injecting into history. No-op for big models. The short
+          // mediaNote appended at the push sites is left intact.
+          return settings.smallModelMode ? truncateToolResult(text) : text
         }
         // After a successful image/video gen, nudge a NATURAL closing comment so
         // the model doesn't silently loop another generation (David 2026-06-04).
@@ -1301,4 +1330,23 @@ Other rules:
     return `${agentInstructions}\n\n${basePrompt}`
   }
   return agentInstructions
+}
+
+// Small-Model Mode (Knob 2): a lean agent prompt (~750 chars vs ~3000 above)
+// for 3B-8B models. Long prompts + big tool catalogs measurably degrade
+// small-model tool-calling (LongFuncEval, arXiv 2505.10570) and small models
+// have a limited instruction-following budget. Keep only what a small model
+// needs to ACT — same tool names + native call format as the full prompt.
+function buildAgentSystemPromptLean(basePrompt: string): string {
+  const lean = `You are an autonomous agent in Locally Uncensored with tools on this computer. Do tasks by CALLING tools — do not just describe them.
+
+Tools: file_read, file_write, file_list, file_search, web_search, web_fetch, shell_execute, code_execute, system_info, get_current_time, image_generate, video_generate.
+
+Rules:
+- To build/create/write something, CALL the tool (usually file_write) — never paste a code block and say "save this".
+- After each tool result, if a step remains, immediately call the next tool. Do not narrate "I will now…" and then stop.
+- Emit tool calls as valid JSON, one at a time. Never guess file contents — file_read first.
+- For images/video call image_generate / video_generate as real tool calls.
+- When everything is done, reply with one short sentence in the user's language.`
+  return basePrompt ? `${lean}\n\n${basePrompt}` : lean
 }

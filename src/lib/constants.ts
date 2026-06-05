@@ -16,6 +16,9 @@ export const DEFAULT_SETTINGS: Settings = {
   onboardingDone: false,
   personasEnabled: true,
   thinkingEnabled: true,
+  // Small-Model Mode (v2.5.0) — lean profile for 3B-8B local models.
+  // Default OFF: big models behave exactly as before until the user flips it.
+  smallModelMode: false,
   cavemanMode: 'off',
   searchProvider: 'auto',
   braveApiKey: '',

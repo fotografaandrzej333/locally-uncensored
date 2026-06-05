@@ -87,6 +87,7 @@ export function selectRelevantTools(
   userMessage: string,
   allTools: MCPToolDefinition[],
   permissions: PermissionMap,
+  maxTools?: number,
 ): MCPToolDefinition[] {
   const msg = userMessage.toLowerCase()
   const selectedNames = new Set<string>(ALWAYS_INCLUDE)
@@ -115,9 +116,46 @@ export function selectRelevantTools(
   const selected = available.filter(t => selectedNames.has(t.name))
 
   // Safety: if nothing matched at all, return all available tools
-  if (selected.length === 0) return available
+  if (selected.length === 0) return applyMaxTools(available, maxTools)
 
-  return selected
+  // Small-Model Mode (Knob 1): cap the catalog when maxTools is set. No-op
+  // (returns `selected` unchanged) when unset — default behaviour preserved.
+  return applyMaxTools(selected, maxTools)
+}
+
+/**
+ * Hard-cap a tool list to `maxTools` entries (Small-Model Mode, Knob 1).
+ * ALWAYS_INCLUDE tools are kept first (cheap + often needed mid-run); the
+ * remainder fills from the incoming order, or from `rankOrder` when supplied
+ * (the embedding-ranked names from the async path) so the most semantically
+ * relevant tools survive the cut. Strict no-op when `maxTools` is unset or
+ * the list already fits — big models keep the exact original list + order.
+ *
+ * Evidence: tool-catalog length is the confirmed killer for small models
+ * (LongFuncEval arXiv 2505.10570 — 8B models lose 7.6-85.6% as the catalog
+ * grows). Fewer tools is the single biggest fine-tuning-free win.
+ */
+export function applyMaxTools(
+  defs: MCPToolDefinition[],
+  maxTools?: number,
+  rankOrder?: string[],
+): MCPToolDefinition[] {
+  if (!maxTools || maxTools <= 0 || defs.length <= maxTools) return defs
+  const always = defs.filter((t) => ALWAYS_INCLUDE.includes(t.name))
+  let rest = defs.filter((t) => !ALWAYS_INCLUDE.includes(t.name))
+  if (rankOrder && rankOrder.length > 0) {
+    const idx = (name: string) => {
+      const i = rankOrder.indexOf(name)
+      return i === -1 ? Number.MAX_SAFE_INTEGER : i
+    }
+    rest = [...rest].sort((a, b) => idx(a.name) - idx(b.name))
+  }
+  const out = [...always]
+  for (const t of rest) {
+    if (out.length >= maxTools) break
+    out.push(t)
+  }
+  return out
 }
 
 /**
@@ -132,12 +170,12 @@ export async function selectRelevantToolsAsync(
   userMessage: string,
   allTools: MCPToolDefinition[],
   permissions: PermissionMap,
-  opts?: { embed?: EmbeddingFn; embeddingThreshold?: number; topN?: number },
+  opts?: { embed?: EmbeddingFn; embeddingThreshold?: number; topN?: number; maxTools?: number },
 ): Promise<MCPToolDefinition[]> {
   const threshold = opts?.embeddingThreshold ?? EMBEDDING_ROUTING_THRESHOLD
   const available = allTools.filter((t) => permissions[t.category] !== 'blocked')
   if (!opts?.embed || available.length <= threshold) {
-    return selectRelevantTools(userMessage, allTools, permissions)
+    return applyMaxTools(selectRelevantTools(userMessage, allTools, permissions), opts?.maxTools)
   }
   try {
     const semanticNames = await selectToolsByEmbedding(
@@ -148,8 +186,13 @@ export async function selectRelevantToolsAsync(
     )
     const keyword = selectRelevantTools(userMessage, allTools, permissions)
     const union = new Set<string>([...semanticNames, ...keyword.map((t) => t.name)])
-    return available.filter((t) => union.has(t.name))
+    const selected = available.filter((t) => union.has(t.name))
+    // Small-Model Mode (Knob 1): cap the union to maxTools, filling from
+    // embedding-rank order so the most relevant tools survive. No-op when
+    // maxTools is unset → `selected` (and its original order) is returned
+    // byte-identical, so big-model behaviour is unchanged.
+    return applyMaxTools(selected, opts.maxTools, semanticNames)
   } catch {
-    return selectRelevantTools(userMessage, allTools, permissions)
+    return applyMaxTools(selectRelevantTools(userMessage, allTools, permissions), opts?.maxTools)
   }
 }

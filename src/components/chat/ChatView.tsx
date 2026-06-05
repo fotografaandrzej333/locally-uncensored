@@ -18,6 +18,7 @@ import { FileText, Bot, ChevronDown, Download, Brain, Wrench, Radio, RefreshCw, 
 import { PluginsDropdown } from './PluginsDropdown'
 import { TokenCounter } from './TokenCounter'
 import { ContextDropdown } from './ContextDropdown'
+import { SmallModelModeToggle } from './SmallModelModeToggle'
 import { MemoryDebugToggle } from './MemoryDebugPanel'
 import { ABCompare } from './ABCompare'
 import { useCompareStore } from '../../stores/compareStore'
@@ -195,6 +196,10 @@ export function ChatView() {
 
                 {/* Context window picker (Ollama num_ctx / LM Studio loaded ctx) */}
                 <ContextDropdown />
+
+                {/* Small-Model Mode — only relevant when the agent loop (tools)
+                    is active; plain chat has no tool calls to lean out. */}
+                {isAgentActive && <SmallModelModeToggle />}
 
                 {/* Memory Debug */}
                 <MemoryDebugToggle />

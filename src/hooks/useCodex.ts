@@ -33,7 +33,9 @@ import { budgetFromSettings } from '../api/agents/budget'
 import { finalStripThinkingTags } from '../lib/thinking-stripper'
 import { streamOllamaChatWithTools } from '../lib/ollama-stream-tools'
 import { repairToolCallArgs, extractToolCallsFromContent, extractToolCallsWithRanges, stripRanges } from '../lib/tool-call-repair'
-import { selectRelevantTools } from '../lib/tool-selection'
+import { selectRelevantTools, selectRelevantToolsAsync } from '../lib/tool-selection'
+import { generateEmbeddings } from '../api/rag'
+import { truncateToolResult } from '../lib/truncate-tool-result'
 import { compactMessages, getModelMaxTokens } from '../lib/context-compaction'
 import { useMemoryStore } from '../stores/memoryStore'
 import { extractMemoriesFromPair } from './useMemory'
@@ -84,6 +86,21 @@ Rules:
 - If a command fails, diagnose and retry with a different approach — don't hand back to the user unless truly stuck
 - Be concise in text. All the work happens in tool calls.
 - FINISH with a short natural-language sentence summarising what you did or found. NEVER end your turn with only a raw JSON object or a bare code block — the user needs a human-readable answer, not a data dump.`
+
+// Small-Model Mode (Knob 2): a lean Codex prompt (~500 chars vs ~1700 above)
+// for 3B-8B models. Research (LongFuncEval, arXiv 2505.10570) shows long
+// prompts + big tool catalogs degrade small-model tool-calling, and small
+// models have a limited instruction-following budget — the verbose autonomy /
+// workflow prose costs more than it buys. Keep only the essentials and stay
+// faithful to the native tool-call format. Selected at the injection point
+// below when settings.smallModelMode is on (review mode still wins).
+const CODEX_SYSTEM_PROMPT_LEAN = `You are a coding agent in Locally Uncensored. Use tools to do the work — never guess file contents.
+
+Rules:
+- Read a file before you edit it.
+- After each tool result, if more steps remain, immediately call the next tool. Do not narrate "I will now…" and then stop.
+- Emit tool calls as valid JSON, one step at a time.
+- When the task is done and verified, reply with one short sentence. Never end with only raw JSON or a bare code block.`
 
 // Local alias — the helper now lives in src/lib/ollama-stream-tools.ts
 // so useAgentChat can share the same wire protocol + arg-repair layer
@@ -261,9 +278,14 @@ export function useCodex() {
     // list-stripping below (REVIEW_MODE_FORBIDDEN_TOOLS) still enforces it
     // programmatically even if the model tries to call a write tool anyway.
     const reviewMode = settings.codexReviewMode === true
-    let systemPrompt = reviewMode
-      ? `${CODEX_REVIEW_SYSTEM_PROMPT}\n\nWorking directory: ${workDir}`
-      : `${CODEX_SYSTEM_PROMPT}\n\nWorking directory: ${workDir}`
+    // Review mode always wins; otherwise Small-Model Mode swaps in the lean
+    // prompt (Knob 2) for small local models.
+    const baseCodexPrompt = reviewMode
+      ? CODEX_REVIEW_SYSTEM_PROMPT
+      : settings.smallModelMode
+        ? CODEX_SYSTEM_PROMPT_LEAN
+        : CODEX_SYSTEM_PROMPT
+    let systemPrompt = `${baseCodexPrompt}\n\nWorking directory: ${workDir}`
 
     // Memory injection — parity with Chat + Agent. Codex was the only
     // surface that ignored the memory system; now it sees remembered
@@ -538,9 +560,16 @@ export function useCodex() {
         // 8K-context local models blow past their window after a few tool
         // calls and Ollama starts silently truncating or errors out.
         try {
+          // Small-Model Mode (Knob 4): keep the REAL prompt short — that is the
+          // actual lever for small models, NOT num_ctx (research found the
+          // num_ctx-as-ceiling fear is largely a myth). Tighter ratio + an
+          // absolute cap so history stays small regardless of the allocation.
+          const compactBudget = settings.smallModelMode
+            ? Math.floor(Math.min(numCtx * 0.5, 6000))
+            : Math.floor(numCtx * 0.8)
           messages = compactMessages(
             messages as unknown as OllamaChatMessage[],
-            Math.floor(numCtx * 0.8),
+            compactBudget,
           ) as unknown as ChatMessage[]
         } catch {
           // Compaction is best-effort; fall through with raw history.
@@ -573,7 +602,19 @@ export function useCodex() {
           // tools are intentionally not surfaced by the keyword router). This
           // line is the single most important parity point with uselu — do NOT
           // replace it with the full `codexTools` set (that was the regression).
-          const relevantDefs = selectRelevantTools(lastUserMsg, codexTools, permissions)
+          // Small-Model Mode (Knob 1): give Codex the embedding router it
+          // normally lacks (it ships keyword-only) plus a hard tool cap, so a
+          // 3B-8B coding model sees a short, semantically-ranked tool list.
+          // Default mode keeps the proven keyword-only selection — uselu parity,
+          // the single most important small-model line; do NOT widen it.
+          const relevantDefs = settings.smallModelMode
+            ? await selectRelevantToolsAsync(lastUserMsg, codexTools, permissions, {
+                embed: (texts) => generateEmbeddings(texts),
+                topN: 5,
+                embeddingThreshold: 6,
+                maxTools: 6,
+              })
+            : selectRelevantTools(lastUserMsg, codexTools, permissions)
           const tools: ToolDefinition[] = relevantDefs.map(t => ({
             type: 'function' as const,
             function: { name: t.name, description: t.description, parameters: t.inputSchema },
@@ -1135,8 +1176,16 @@ export function useCodex() {
 
         // Feed results back into LLM history (batched per-provider shape).
         const resultTextFor = (r: typeof results[number]): string => {
-          if (r.status === 'completed' || r.status === 'cached') return r.result ?? ''
-          return r.errorHint ? `${r.error ?? 'Tool failed'} — ${r.errorHint}` : (r.error ?? 'Tool failed')
+          const text =
+            r.status === 'completed' || r.status === 'cached'
+              ? (r.result ?? '')
+              : r.errorHint
+                ? `${r.error ?? 'Tool failed'} — ${r.errorHint}`
+                : (r.error ?? 'Tool failed')
+          // Small-Model Mode (Knob 3): truncate long tool outputs (head+tail)
+          // before they re-enter the model history. Long results cost small
+          // models ~30% accuracy (LongFuncEval). No-op for big models.
+          return settings.smallModelMode ? truncateToolResult(text) : text
         }
 
         if (providerId === 'openai' || providerId === 'anthropic') {

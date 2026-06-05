@@ -1856,8 +1856,9 @@ pub fn lmstudio_list_loaded() -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({ "loaded": loaded }))
 }
 
+#[allow(non_snake_case)]
 #[tauri::command]
-pub fn lmstudio_load_model(model: String) -> Result<serde_json::Value, String> {
+pub fn lmstudio_load_model(model: String, contextLength: Option<u32>) -> Result<serde_json::Value, String> {
     let lms = lmstudio_lms_path()
         .ok_or_else(|| "lms CLI not found — install LM Studio first".to_string())?;
     // `lms load` blocks until the model is in memory. The caller is expected
@@ -1874,24 +1875,88 @@ pub fn lmstudio_load_model(model: String) -> Result<serde_json::Value, String> {
     // loads the first/preferred match, which is exactly the scripted behaviour
     // we want. Verified: `lms load -y <key>` returns in ~4s and `lms ps` shows
     // the model loaded.
+    //
+    // contextLength: LM Studio fixes the context window at LOAD time (the
+    // OpenAI-compat HTTP API has no per-request num_ctx). To CHANGE it we must
+    // reload — so when a context length is requested we unload the current
+    // instance first (best-effort; a no-op if nothing is loaded) and reload
+    // with `-c <N>` (`lms load --context-length`). Without a context length
+    // this stays a plain load (the B3 power toggle path, unchanged).
+    if contextLength.is_some() {
+        let _ = Command::new(&lms).args(["unload", &model]).output();
+    }
+    let ctx = contextLength.unwrap_or(0);
+    let ctx_str = ctx.to_string();
+    let mut args: Vec<&str> = vec!["load", model.as_str(), "-y"];
+    if ctx > 0 {
+        args.push("-c");
+        args.push(ctx_str.as_str());
+    }
     let output = Command::new(&lms)
-        .args(["load", &model, "-y"])
+        .args(&args)
         .output()
         .map_err(|e| format!("spawn lms load: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         eprintln!(
-            "[lmstudio_load_model] FAILED model='{}' code={:?}\n  stderr={:?}\n  stdout={:?}",
+            "[lmstudio_load_model] FAILED model='{}' ctx={:?} code={:?}\n  stderr={:?}\n  stdout={:?}",
             model,
+            contextLength,
             output.status.code(),
             stderr.trim(),
             stdout.trim()
         );
         return Err(format!("lms load failed: {}", stderr.trim()));
     }
-    eprintln!("[lmstudio_load_model] OK model='{}'", model);
-    Ok(serde_json::json!({ "ok": true, "model": model }))
+    eprintln!("[lmstudio_load_model] OK model='{}' ctx={:?}", model, contextLength);
+    Ok(serde_json::json!({ "ok": true, "model": model, "contextLength": contextLength }))
+}
+
+/// Read a model's context window from LM Studio's enhanced REST API
+/// (`GET /api/v0/models`). Returns `loaded_context_length` (what the model is
+/// ACTUALLY running with right now — the value the chat truly uses) and
+/// `max_context_length` (the model's ceiling). Both are null when LM Studio
+/// isn't running or the model isn't found. Reading the list endpoint (not the
+/// per-id one) sidesteps URL-encoding issues with publisher/slash ids.
+#[tauri::command]
+pub fn lmstudio_model_context(model: String) -> Result<serde_json::Value, String> {
+    let null_json = serde_json::json!({ "loaded": serde_json::Value::Null, "max": serde_json::Value::Null, "state": serde_json::Value::Null });
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_millis(2000))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return Ok(null_json),
+    };
+    let url = format!("http://localhost:{}/api/v0/models", LMSTUDIO_DEFAULT_PORT);
+    let resp = match client.get(&url).send() {
+        Ok(r) => r,
+        Err(_) => return Ok(null_json),
+    };
+    if !resp.status().is_success() {
+        return Ok(null_json);
+    }
+    let body: serde_json::Value = match resp.json() {
+        Ok(b) => b,
+        Err(_) => return Ok(null_json),
+    };
+    let entry = body
+        .get("data")
+        .and_then(|d| d.as_array())
+        .and_then(|arr| arr.iter().find(|m| m.get("id").and_then(|i| i.as_str()) == Some(model.as_str())));
+    match entry {
+        Some(m) => {
+            let loaded = m.get("loaded_context_length").and_then(|v| v.as_u64());
+            let max = m
+                .get("max_context_length")
+                .and_then(|v| v.as_u64())
+                .or_else(|| m.get("context_length").and_then(|v| v.as_u64()));
+            let state = m.get("state").and_then(|v| v.as_str());
+            Ok(serde_json::json!({ "loaded": loaded, "max": max, "state": state }))
+        }
+        None => Ok(null_json),
+    }
 }
 
 #[tauri::command]

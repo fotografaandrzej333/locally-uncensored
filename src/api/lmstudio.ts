@@ -16,10 +16,38 @@ export async function listLoadedLmStudioModels(): Promise<string[]> {
   }
 }
 
-export async function loadLmStudioModel(model: string): Promise<void> {
-  await backendCall('lmstudio_load_model', { model })
+/**
+ * Load (or RELOAD) a model in LM Studio. When `contextLength` is given the
+ * bridge unloads the current instance first and reloads with `lms load -c <N>`,
+ * because LM Studio fixes the context window at load time (the OpenAI-compat
+ * HTTP API has no per-request num_ctx). Omit it for a plain load.
+ */
+export async function loadLmStudioModel(model: string, contextLength?: number): Promise<void> {
+  await backendCall('lmstudio_load_model', { model, contextLength: contextLength && contextLength > 0 ? contextLength : null })
 }
 
 export async function unloadLmStudioModel(model: string): Promise<void> {
   await backendCall('lmstudio_unload_model', { model })
+}
+
+export interface LmStudioModelContext {
+  /** The context window the model is ACTUALLY running with (null = not loaded). */
+  loaded: number | null
+  /** The model's maximum context window. */
+  max: number | null
+  /** LM Studio state, e.g. "loaded" | "not-loaded". */
+  state: string | null
+}
+
+/**
+ * Read a model's real context window from LM Studio's enhanced REST API.
+ * `loaded` is the source of truth for the TokenCounter denominator — it's what
+ * the chat actually uses, not the model's theoretical max.
+ */
+export async function getLmStudioModelContext(model: string): Promise<LmStudioModelContext> {
+  try {
+    return await backendCall<LmStudioModelContext>('lmstudio_model_context', { model })
+  } catch {
+    return { loaded: null, max: null, state: null }
+  }
 }

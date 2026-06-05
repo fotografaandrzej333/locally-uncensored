@@ -63,6 +63,24 @@ export async function getModelContextCached(name: string): Promise<number> {
   return v
 }
 
+/**
+ * Force Ollama to (re)load a model with a specific num_ctx RIGHT NOW, so a
+ * context-window change from the dropdown takes effect immediately instead of
+ * silently on the next chat. Ollama keys its loaded runner by num_ctx, so an
+ * `/api/generate` with an empty prompt + `options.num_ctx` swaps the resident
+ * KV cache to the new size; `keep_alive` keeps the reloaded model warm.
+ * Best-effort — failures are swallowed (the next real chat still sends num_ctx).
+ */
+export async function warmupOllamaContext(model: string, numCtx: number): Promise<void> {
+  if (!model || !numCtx || numCtx <= 0) return
+  try {
+    await localFetch(ollamaUrl("/generate"), {
+      method: "POST",
+      body: JSON.stringify({ model, prompt: "", stream: false, keep_alive: "30m", options: { num_ctx: numCtx } }),
+    })
+  } catch { /* best-effort warmup — non-fatal */ }
+}
+
 export async function chatStream(
   model: string,
   messages: { role: string; content: string }[],

@@ -17,6 +17,7 @@ import { isAgentCompatible, isThinkingCompatible } from '../../lib/model-compati
 import { FileText, Bot, ChevronDown, Download, Brain, Wrench, Radio, RefreshCw, X } from 'lucide-react'
 import { PluginsDropdown } from './PluginsDropdown'
 import { TokenCounter } from './TokenCounter'
+import { ContextDropdown } from './ContextDropdown'
 import { MemoryDebugToggle } from './MemoryDebugPanel'
 import { ABCompare } from './ABCompare'
 import { useCompareStore } from '../../stores/compareStore'
@@ -191,6 +192,9 @@ export function ChatView() {
 
                 {/* Token Counter */}
                 <TokenCounter />
+
+                {/* Context window picker (Ollama num_ctx / LM Studio loaded ctx) */}
+                <ContextDropdown />
 
                 {/* Memory Debug */}
                 <MemoryDebugToggle />

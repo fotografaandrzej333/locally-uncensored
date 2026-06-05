@@ -114,6 +114,7 @@ fn main() {
             commands::install::lmstudio_server_status,
             commands::install::lmstudio_list_loaded,
             commands::install::lmstudio_load_model,
+            commands::install::lmstudio_model_context,
             commands::install::lmstudio_unload_model,
             commands::install::install_python,
             commands::install::install_python_status,

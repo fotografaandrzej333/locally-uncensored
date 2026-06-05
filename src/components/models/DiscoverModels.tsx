@@ -33,6 +33,10 @@ import { log } from '../../lib/logger'
 
 interface Props {
   category: ModelCategory
+  /** Filter query driven by the ModelManager header search input. */
+  search?: string
+  /** Bumped by ModelManager whenever the user submits the search (Enter). */
+  searchSubmitToken?: number
 }
 
 function ModelDiscoverCard({ model, index, isText, getModelDownloadState, isModelFullyInstalled, handleDownload }: {
@@ -159,7 +163,7 @@ function ModelDiscoverCard({ model, index, isText, getModelDownloadState, isMode
   )
 }
 
-export function DiscoverModels({ category }: Props) {
+export function DiscoverModels({ category, search = '', searchSubmitToken = 0 }: Props) {
   const [civitaiResults, setCivitaiResults] = useState<CivitAIModelResult[]>([])
   const [civitaiSearching, setCivitaiSearching] = useState(false)
   const [civitaiQuery, setCivitaiQuery] = useState('')
@@ -170,7 +174,6 @@ export function DiscoverModels({ category }: Props) {
   // button did nothing.
   const [civitaiSearched, setCivitaiSearched] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [search, setSearch] = useState('')
   const [systemVRAM, setSystemVRAM] = useState<number | null>(null)
   const [subTab, setSubTab] = useState<'uncensored' | 'mainstream'>('uncensored')
   const [vramTier, setVramTier] = useState<'all' | 'lightweight' | 'mid' | 'highend'>('all')
@@ -458,6 +461,14 @@ export function DiscoverModels({ category }: Props) {
     setLoading(false)
   }
 
+  // The search input now lives in the ModelManager header (uselu arrangement).
+  // It feeds `search` (live filter) and bumps `searchSubmitToken` on Enter,
+  // which we treat as "run the HuggingFace catalog search".
+  useEffect(() => {
+    if (searchSubmitToken > 0 && search.trim() && isText) handleSearch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchSubmitToken])
+
   const uncensoredModels = isText ? getUncensoredTextModels() : []
   const mainstreamModels = isText ? getMainstreamTextModels() : []
 
@@ -481,20 +492,6 @@ export function DiscoverModels({ category }: Props) {
 
   const filteredUncensored = uncensoredModels.filter(m => matchesSearch(m) && matchesVramTier(m.sizeGB))
   const filteredMainstream = mainstreamModels.filter(m => matchesSearch(m) && matchesVramTier(m.sizeGB))
-
-  const title = 'Discover'
-  const subtitle = isText
-    ? 'Download GGUF models from HuggingFace.'
-    : isImage
-      ? 'Browse image generation models for ComfyUI.'
-      : 'Browse video generation models for ComfyUI.'
-
-  const handleRefresh = () => {
-    setLoading(true)
-    setHfSearchResults([])
-    const providerName = providers.openai?.name || 'LM Studio'
-    detectProviderModelPath(providerName).then(path => { setHfModelPath(path); setLoading(false) })
-  }
 
   // Turn a raw Ollama pull error into actionable guidance. Sharded/split GGUF
   // repos (model split into multiple .gguf parts) make `ollama pull` 400 —
@@ -641,29 +638,6 @@ export function DiscoverModels({ category }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="relative text-center">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h2>
-        <p className="text-sm text-gray-500 mt-1">{subtitle}</p>
-        {isText && (
-          <GlowButton variant="secondary" onClick={handleRefresh} disabled={loading} aria-label="Refresh" className="absolute right-0 top-0 !px-2 !py-1.5">
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          </GlowButton>
-        )}
-      </div>
-
-      <div className="relative w-1/2 mx-auto">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && isText) handleSearch() }}
-          placeholder={isText ? 'Search HuggingFace GGUF (e.g. "qwen 14b" or "bartowski/Llama-3.1") — Enter to search' : 'Filter models...'}
-          className="w-full pl-9 pr-3 py-2 rounded-lg bg-gray-100 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:border-gray-400 dark:focus:border-white/30"
-        />
-      </div>
-
-      {/* All download progress is shown exclusively in the DownloadBadge (header) */}
-
       {!isText && (
         <p className="text-[0.65rem] text-gray-500 text-center">
           Requires ComfyUI configured in Model Manager.

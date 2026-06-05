@@ -603,7 +603,7 @@ export function useCodex() {
             // updates so the "Hello, I am the Coding Agent…" line never
             // lands in the chat. The post-stream echoDetected branch then drops
             // the buffer entirely and forces a silent retry.
-            let turn: { content: string; toolCalls: ToolCall[]; thinking: string }
+            let turn: { content: string; toolCalls: ToolCall[]; thinking: string; promptEvalCount?: number; evalCount?: number }
             const liveContent = (c: string) => {
               if (echoRetriesRemaining > 0 && isSystemPromptEcho(c)) return
               useChatStore.getState().updateMessageContent(convId!, assistantMsg.id, fullContent ? fullContent + '\n\n' + c : c)
@@ -643,6 +643,17 @@ export function useCodex() {
             }
             toolCalls = turn.toolCalls
             turnContent = turn.content || ''
+            // Real consumed-context usage for THIS coding turn (system + tools +
+            // RAG + file context + history). Multiple model calls run per task;
+            // the latest has the fullest prompt, so store each (last wins) to
+            // keep the TokenCounter on the true fill, not a char/4 estimate.
+            if (turn.promptEvalCount || turn.evalCount) {
+              useChatStore.getState().updateMessageUsage(convId!, assistantMsg.id, {
+                promptTokens: turn.promptEvalCount || 0,
+                completionTokens: turn.evalCount || 0,
+                totalTokens: (turn.promptEvalCount || 0) + (turn.evalCount || 0),
+              })
+            }
             void diagLog('streamWithTools-return', {
               iter: i,
               toolCallsCount: toolCalls.length,

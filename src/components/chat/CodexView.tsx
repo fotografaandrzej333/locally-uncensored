@@ -6,6 +6,7 @@ import { ToolCallBlock } from './ToolCallBlock'
 import { ThinkingBlock } from './ThinkingBlock'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { TokenCounter } from './TokenCounter'
+import { ContextDropdown } from './ContextDropdown'
 import { MemoryDebugToggle } from './MemoryDebugPanel'
 import { RealtimeCounter } from './RealtimeCounter'
 import { PluginsDropdown } from './PluginsDropdown'
@@ -169,6 +170,7 @@ export function CodexView() {
             <span>New</span>
           </button>
           <TokenCounter />
+          <ContextDropdown />
           <MemoryDebugToggle />
           <PluginsDropdown />
         </div>

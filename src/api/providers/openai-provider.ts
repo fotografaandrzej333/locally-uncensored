@@ -284,7 +284,7 @@ export class OpenAIProvider implements ProviderClient {
     messages: ChatMessage[],
     tools: ToolDefinition[],
     options?: ChatOptions,
-  ): Promise<{ content: string; toolCalls: ToolCall[] }> {
+  ): Promise<{ content: string; toolCalls: ToolCall[]; promptEvalCount?: number; evalCount?: number }> {
     const body: Record<string, any> = {
       model,
       messages: messages.map(m => this.toOpenAIMessage(m)),
@@ -337,9 +337,13 @@ export class OpenAIProvider implements ProviderClient {
       },
     }))
 
+    // Real consumed-context usage (non-streaming response carries it directly).
+    const usage = (data as { usage?: { prompt_tokens?: number; completion_tokens?: number } }).usage
     return {
       content: choice?.message?.content || '',
       toolCalls,
+      promptEvalCount: usage?.prompt_tokens,
+      evalCount: usage?.completion_tokens,
     }
   }
 

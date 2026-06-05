@@ -30,7 +30,7 @@ export async function streamOllamaChatWithTools(
   options: { temperature?: number; thinking?: boolean; maxTokens?: number; contextWindow?: number; signal?: AbortSignal },
   onContent: (content: string) => void,
   onThinking: (thinking: string) => void,
-): Promise<{ content: string; toolCalls: ToolCall[]; thinking: string }> {
+): Promise<{ content: string; toolCalls: ToolCall[]; thinking: string; promptEvalCount: number; evalCount: number }> {
   const ollamaMessages = messages.map((m) => {
     const msg: Record<string, any> = { role: m.role, content: m.content }
     if (m.tool_calls) msg.tool_calls = m.tool_calls
@@ -91,6 +91,12 @@ export async function streamOllamaChatWithTools(
   let content = ''
   let thinking = ''
   let toolCalls: ToolCall[] = []
+  // Real token usage from the final Ollama chunk (top-level, not in `message`).
+  // prompt_eval_count is the FULL consumed context (system + tools + RAG +
+  // history) for THIS turn — the agent/code loop stores the latest so the
+  // TokenCounter shows 100% real usage instead of a char/4 estimate.
+  let promptEvalCount = 0
+  let evalCount = 0
 
   while (true) {
     if (options.signal?.aborted) {
@@ -130,6 +136,8 @@ export async function streamOllamaChatWithTools(
             ]
           }
         }
+        if (typeof j.prompt_eval_count === 'number') promptEvalCount = j.prompt_eval_count
+        if (typeof j.eval_count === 'number') evalCount = j.eval_count
       } catch {
         // partial JSON line — skip
       }
@@ -158,10 +166,12 @@ export async function streamOllamaChatWithTools(
         thinking += j.message.thinking
         onThinking(thinking)
       }
+      if (typeof j.prompt_eval_count === 'number') promptEvalCount = j.prompt_eval_count
+      if (typeof j.eval_count === 'number') evalCount = j.eval_count
     } catch {
       // ignore tail-buffer parse errors
     }
   }
 
-  return { content, toolCalls, thinking }
+  return { content, toolCalls, thinking, promptEvalCount, evalCount }
 }

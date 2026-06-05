@@ -152,13 +152,15 @@ export interface ProviderClient {
     options?: ChatOptions
   ): AsyncGenerator<ChatStreamChunk>
 
-  /** Non-streaming chat with tool calling support. */
+  /** Non-streaming chat with tool calling support. The optional
+   *  promptEvalCount/evalCount carry real token usage (consumed context) so
+   *  the agent/code TokenCounter can show the true fill, not a char/4 estimate. */
   chatWithTools(
     model: string,
     messages: ChatMessage[],
     tools: ToolDefinition[],
     options?: ChatOptions
-  ): Promise<{ content: string; toolCalls: ToolCall[] }>
+  ): Promise<{ content: string; toolCalls: ToolCall[]; promptEvalCount?: number; evalCount?: number }>
 
   /** List available models from this provider. */
   listModels(): Promise<ProviderModel[]>

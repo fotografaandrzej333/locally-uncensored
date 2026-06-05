@@ -572,7 +572,7 @@ export function useAgentChat() {
             function: { name: t.name, description: t.description, parameters: t.inputSchema },
           }))
 
-          let turn!: { content: string; toolCalls: ToolCall[]; thinking?: string }
+          let turn!: { content: string; toolCalls: ToolCall[]; thinking?: string; promptEvalCount?: number; evalCount?: number }
           if (providerId === 'ollama') {
             // Streaming path — parity with desktop Codex. Without this
             // the user stared at a frozen chat for 30-90 s while Gemma
@@ -676,6 +676,18 @@ export function useAgentChat() {
 
           toolCalls = turn.toolCalls
           turnContent = turn.content || ''
+          // Real consumed-context usage for THIS turn (system + tools + RAG +
+          // history + input). The agent loop runs multiple model calls; the
+          // latest one has the fullest prompt, so storing each turn (last wins)
+          // keeps the TokenCounter on the true current fill instead of a char/4
+          // estimate. Ollama reports it natively; openai providers via usage.
+          if (turn.promptEvalCount || turn.evalCount) {
+            useChatStore.getState().updateMessageUsage(convId!, assistantMessage.id, {
+              promptTokens: turn.promptEvalCount || 0,
+              completionTokens: turn.evalCount || 0,
+              totalTokens: (turn.promptEvalCount || 0) + (turn.evalCount || 0),
+            })
+          }
           // Native thinking field from Ollama
           if ((turn as any).thinking) turnThinking = (turn as any).thinking
 

@@ -205,6 +205,8 @@ fn main() {
             commands::proxy::proxy_localhost_stream_chunked,
             commands::proxy::pull_model_stream,
             commands::proxy::cancel_model_pull,
+            // Cloud "Hosted LU Workflows" waitlist — opt-in email capture
+            commands::waitlist::waitlist_submit,
             // B7 (uselu Phase 4 inspiration) — one-shot diagnostic probe
             commands::health::system_health,
             // Bug BB v2.5.0 — BobbyT GPU picker

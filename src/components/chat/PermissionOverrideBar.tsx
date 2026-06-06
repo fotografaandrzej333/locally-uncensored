@@ -1,6 +1,7 @@
 import { usePermissionStore } from '../../stores/permissionStore'
 import { useChatStore } from '../../stores/chatStore'
 import type { ToolCategory } from '../../api/mcp/types'
+import { useImageToolNoti } from '../../hooks/useImageToolNoti'
 import { FolderOpen, Terminal, Monitor, Globe, Cpu, Image, Film, GitBranch, Lock } from 'lucide-react'
 
 // Image generation is LIVE (chat agent → ComfyUI). Video generation is turned
@@ -23,6 +24,7 @@ const CATEGORIES: { key: ToolCategory; icon: typeof Globe; label: string }[] = [
 export function PermissionOverrideBar() {
   const activeConversationId = useChatStore((s) => s.activeConversationId)
   const { getEffectivePermissions, setConversationOverride } = usePermissionStore()
+  const { visible: imageNoti, dismiss: dismissImageNoti } = useImageToolNoti()
 
   if (!activeConversationId) return null
 
@@ -30,6 +32,9 @@ export function PermissionOverrideBar() {
 
   const toggleTool = (cat: ToolCategory) => {
     if (LOCKED.has(cat)) return
+    // First click on the image-tool noti only acknowledges it (purely visual,
+    // no activation — David 2026-06-06). After that the row toggles as normal.
+    if (cat === 'image' && imageNoti) { dismissImageNoti(); return }
     const current = permissions[cat]
     setConversationOverride(activeConversationId, cat, current === 'blocked' ? 'auto' : 'blocked')
   }
@@ -58,6 +63,13 @@ export function PermissionOverrideBar() {
               <Icon size={8} className={isOn ? 'text-green-400' : 'text-gray-600'} />
             )}
             <span className={`flex-1 text-left ${isLocked ? 'line-through' : ''}`}>{label}</span>
+            {/* Image-tool discovery noti — small purple "1", purely visual,
+                clears on first click (David 2026-06-06). HW-gated by the hook. */}
+            {key === 'image' && imageNoti && (
+              <span className="min-w-[12px] h-[12px] flex items-center justify-center rounded-full bg-purple-500 text-[0.45rem] font-bold text-white leading-none px-0.5 mr-0.5">
+                1
+              </span>
+            )}
             {isLocked ? (
               <span className="text-[0.4rem] text-gray-700">soon</span>
             ) : (

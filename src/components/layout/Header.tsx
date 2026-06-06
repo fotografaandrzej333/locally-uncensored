@@ -9,6 +9,7 @@ import { ModelSelector } from '../models/ModelSelector'
 import { MemoryDebugToggle } from '../chat/MemoryDebugPanel'
 import { UpdateBadge } from './UpdateBadge'
 import { DownloadBadge } from './DownloadBadge'
+import { CloudWaitlistBadge } from './CloudWaitlistBadge'
 import { CreateTopControls } from '../create/CreateTopControls'
 import { loadModel } from '../../api/ollama'
 import { getProviderIdFromModel } from '../../api/providers'
@@ -136,7 +137,7 @@ export function Header() {
   )
 
   return (
-    <header className="relative h-10 flex items-center justify-between px-3 bg-gray-100 dark:bg-[#141414] z-20">
+    <header className="relative h-10 flex items-center justify-between px-3 bg-gray-100 dark:bg-[#141414] z-30">
       {/* Left: Sidebar + Logo */}
       <div className="flex items-center gap-2">
         <button
@@ -159,6 +160,10 @@ export function Header() {
               inverted per theme. Matches the web companion. */}
           <img src="/LU-monogram-bw.png" alt="" width={33} height={33} className="dark:invert-0 invert opacity-80" />
         </button>
+        {/* Cloud "Hosted LU Workflows" waitlist teaser — subtle opt-in badge
+            in the brand area (David 2026-06-06). Sends nothing unless the user
+            explicitly joins; hidden for good only via "Don't show me again". */}
+        <CloudWaitlistBadge />
       </div>
 
       {/* Center: model picker, geometrically centered between the logo (left)

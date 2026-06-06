@@ -14,6 +14,7 @@ pub mod search;
 pub mod shell;
 pub mod system;
 pub mod tts;
+pub mod waitlist;
 pub mod whisper;
 
 // ── uselu-compat error helpers ────────────────────────────────────────

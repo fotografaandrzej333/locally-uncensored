@@ -122,10 +122,15 @@ fn main() {
             commands::install::install_custom_node,
             commands::install::install_whisper,
             commands::install::install_whisper_status,
+            commands::install::install_tts,
+            commands::install::install_tts_status,
             commands::install::check_git_installed,
             // Whisper STT
             commands::whisper::whisper_status,
             commands::whisper::transcribe,
+            // Piper neural TTS
+            commands::tts::tts_status,
+            commands::tts::synthesize,
             // Agent tools (legacy)
             commands::agent::execute_code,
             commands::agent::file_read,

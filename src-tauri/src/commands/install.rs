@@ -9,7 +9,7 @@ use std::time::Instant;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-use tauri::State;
+use tauri::{Manager, State};
 use tracing::{error, info};
 
 use crate::python::venv_python_path;
@@ -2380,6 +2380,147 @@ pub fn install_whisper_status(state: State<'_, AppState>) -> Result<serde_json::
         "download_progress": install.download_progress,
         "download_total": install.download_total,
         "download_speed": install.download_speed,
+    }))
+}
+
+// ── Piper neural TTS installer (David 2026-06-06 — local neural TTS) ──────────
+
+/// Resolve the Python LU's tooling uses: the ComfyUI venv when present, else
+/// the resolved system Python. Shared by the faster-whisper + Piper-TTS
+/// installers and the TTS synthesizer so they all target the same interpreter.
+pub fn resolve_lu_python(state: &AppState) -> String {
+    let comfy_dir: Option<PathBuf> = {
+        let p = state.comfy_path.lock().unwrap().clone();
+        p.map(PathBuf::from)
+            .or_else(|| crate::commands::process::find_comfyui_path().map(PathBuf::from))
+    };
+    let venv_python = comfy_dir
+        .as_deref()
+        .and_then(crate::python::resolve_comfyui_venv_python);
+    venv_python.unwrap_or_else(|| state.python_bin.lock().unwrap().clone())
+}
+
+/// pip args to install Piper TTS. `piper-tts` ships the `piper` CLI + the
+/// `piper.download_voices` helper. Same flags as the whisper installer.
+fn build_tts_pip_args() -> Vec<&'static str> {
+    vec![
+        "-m", "pip", "install",
+        "--progress-bar", "off",
+        "--no-input",
+        "piper-tts",
+    ]
+}
+
+/// Install Piper (neural TTS) into LU's Python, then download the default voice
+/// model into `<app_data>/piper_voices/`. Mirrors `install_whisper`. Progress
+/// is polled via `install_tts_status`; `tts_status` reports usability.
+#[tauri::command]
+pub fn install_tts(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    {
+        let mut install = state.tts_install.lock().unwrap();
+        if install.status == "installing" {
+            return Ok(serde_json::json!({"status": "already_installing"}));
+        }
+        install.status = "installing".to_string();
+        install.logs.clear();
+        install.logs.push("Starting neural TTS (Piper) installation...".to_string());
+    }
+
+    info!("tts install start");
+
+    let target_python = resolve_lu_python(state.inner());
+    if target_python.is_empty() || !crate::python::is_real_python(&target_python) {
+        let mut install = state.tts_install.lock().unwrap();
+        install.status = "error".to_string();
+        install.logs.push(
+            "No Python found. Install Python first (Settings → ComfyUI → Install Python), \
+             then retry the neural TTS install."
+                .to_string(),
+        );
+        error!("tts install aborted: no usable python");
+        return Err("no_python: Python must be installed before Piper TTS.".to_string());
+    }
+
+    let voices_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("no app data dir: {}", e))?
+        .join("piper_voices");
+
+    let install_state = state.tts_install.clone();
+
+    std::thread::spawn(move || {
+        let update = |status: &str, msg: &str| {
+            if let Ok(mut s) = install_state.lock() {
+                s.status = status.to_string();
+                s.logs.push(msg.to_string());
+            }
+        };
+
+        update(
+            "installing",
+            &format!("Installing piper-tts via {} (this can take a few minutes)…", target_python),
+        );
+
+        let args = build_tts_pip_args();
+        match pip_install_streaming_with_retry_cancellable(&args, &target_python, 3, &install_state, None) {
+            Ok(()) => {
+                update(
+                    "installing",
+                    &format!(
+                        "piper-tts installed. Downloading the {} voice (~63 MB)…",
+                        crate::commands::tts::PIPER_VOICE
+                    ),
+                );
+                let _ = std::fs::create_dir_all(&voices_dir);
+                let mut cmd = Command::new(&target_python);
+                cmd.args([
+                    "-m",
+                    "piper.download_voices",
+                    crate::commands::tts::PIPER_VOICE,
+                    "--download-dir",
+                    &voices_dir.to_string_lossy(),
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+                #[cfg(target_os = "windows")]
+                cmd.creation_flags(CREATE_NO_WINDOW);
+                match cmd.output() {
+                    Ok(o) if o.status.success() => {
+                        update("complete", "Neural TTS is ready.");
+                    }
+                    Ok(o) => {
+                        update(
+                            "error",
+                            &format!("Voice download failed:\n{}", String::from_utf8_lossy(&o.stderr)),
+                        );
+                    }
+                    Err(e) => {
+                        update("error", &format!("Voice download could not start: {}", e));
+                    }
+                }
+            }
+            Err(diagnosis) => {
+                let err = format!("piper-tts installation failed.\n\n{}", diagnosis);
+                println!("[TTS Install] {}", err);
+                update("error", &err);
+            }
+        }
+    });
+
+    Ok(serde_json::json!({"status": "installing"}))
+}
+
+/// Poll the Piper-TTS install progress (mirrors `install_whisper_status`).
+#[tauri::command]
+pub fn install_tts_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let install = state.tts_install.lock().unwrap();
+    Ok(serde_json::json!({
+        "status": install.status,
+        "logs": install.logs,
     }))
 }
 

@@ -12,6 +12,9 @@ interface VoiceState {
   // "available" can never light up the mic on a machine where Whisper is gone,
   // and a fresh install lights it up without a restart.
   sttAvailable: boolean;
+  // Whether local neural TTS (Piper) is installed + a voice model is present.
+  // Same transient/probe model as sttAvailable.
+  ttsAvailable: boolean;
 
   // Persisted settings
   sttEnabled: boolean;
@@ -26,6 +29,7 @@ interface VoiceState {
   setSpeaking: (speaking: boolean) => void;
   setTranscript: (transcript: string) => void;
   setSttAvailable: (available: boolean) => void;
+  setTtsAvailable: (available: boolean) => void;
   updateVoiceSettings: (
     settings: Partial<{
       sttEnabled: boolean;
@@ -47,10 +51,14 @@ export const useVoiceStore = create<VoiceState>()(
       isSpeaking: false,
       transcript: "",
       sttAvailable: false,
+      ttsAvailable: false,
 
       // Persisted settings
       sttEnabled: true,
-      ttsEnabled: false,
+      // TTS (read-aloud) on by default — David 2026-06-06 "texttospeech
+      // aktivieren". There is no auto-speak; this just shows/enables the
+      // per-message read-aloud Speaker button when TTS is usable.
+      ttsEnabled: true,
       ttsVoice: "",
       ttsRate: 1.0,
       ttsPitch: 1.0,
@@ -61,6 +69,7 @@ export const useVoiceStore = create<VoiceState>()(
       setSpeaking: (speaking) => set({ isSpeaking: speaking }),
       setTranscript: (transcript) => set({ transcript }),
       setSttAvailable: (available) => set({ sttAvailable: available }),
+      setTtsAvailable: (available) => set({ ttsAvailable: available }),
 
       updateVoiceSettings: (settings) => set((state) => ({ ...state, ...settings })),
 

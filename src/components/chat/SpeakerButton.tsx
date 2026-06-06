@@ -6,9 +6,13 @@ interface Props {
 }
 
 export function SpeakerButton({ text }: Props) {
-  const { isSpeaking, ttsSupported, speakTextStreaming, stopSpeaking } = useVoice()
+  const { isSpeaking, ttsSupported, ttsAvailable, ttsEnabled, speakTextStreaming, stopSpeaking } = useVoice()
 
-  if (!ttsSupported) return null
+  // Show the read-aloud button only when the feature is on AND some TTS engine
+  // is usable (local neural Piper, or the browser's system voices as fallback).
+  // Availability is reactive: the boot probe (App.tsx) and the Settings install
+  // both push it into the store, so this lights up without a per-message probe.
+  if (!ttsEnabled || (!ttsAvailable && !ttsSupported)) return null
 
   const handleClick = () => {
     if (isSpeaking) {
@@ -21,7 +25,12 @@ export function SpeakerButton({ text }: Props) {
   return (
     <button
       onClick={handleClick}
-      className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-400 hover:text-gray-700 dark:hover:text-white transition-all"
+      className={
+        "p-1 rounded-md transition-colors " +
+        (isSpeaking
+          ? "text-blue-500 dark:text-blue-400 bg-blue-500/10"
+          : "text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/10")
+      }
       title={isSpeaking ? "Stop speaking" : "Read aloud"}
       aria-label={isSpeaking ? "Stop speaking" : "Read aloud"}
     >

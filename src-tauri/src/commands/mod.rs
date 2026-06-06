@@ -13,6 +13,7 @@ pub mod remote;
 pub mod search;
 pub mod shell;
 pub mod system;
+pub mod tts;
 pub mod whisper;
 
 // ── uselu-compat error helpers ────────────────────────────────────────

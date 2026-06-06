@@ -207,62 +207,209 @@ export async function transcribeAudio(audioBlob: Blob): Promise<string> {
   return data.transcript || "";
 }
 
-// --- Audio Recorder (MediaRecorder only, NO SpeechRecognition) ---
+// --- Local neural TTS (Piper) ---
+// Synthesizes via the bundled Piper voice through the Rust `synthesize` command
+// (100% local, no cloud). The browser SpeechSynthesis path in useVoice handles
+// the case where neural TTS isn't installed.
+
+let ttsChecked = false;
+let ttsAvailableFlag = false;
+
+export async function checkTtsAvailable(): Promise<{ available: boolean; piper?: boolean; voice?: boolean }> {
+  try {
+    if (isTauri()) return await backendCall("tts_status");
+    return { available: false };
+  } catch {
+    return { available: false };
+  }
+}
+
+export async function initTtsCheck(): Promise<boolean> {
+  if (ttsChecked) return ttsAvailableFlag;
+  try {
+    ttsAvailableFlag = (await checkTtsAvailable()).available;
+  } catch {
+    ttsAvailableFlag = false;
+  }
+  ttsChecked = true;
+  return ttsAvailableFlag;
+}
+
+// Force a fresh probe (after the in-app install, or when a Speaker button mounts
+// while neural TTS still shows unavailable).
+export async function recheckTtsAvailable(): Promise<boolean> {
+  ttsChecked = false;
+  return initTtsCheck();
+}
+
+/** Synthesize text to a playable WAV data URL via the local Piper voice. */
+export async function synthesizeNeural(text: string): Promise<string> {
+  const data = await backendCall<{ audio_base64?: string; mime?: string }>("synthesize", { text });
+  if (!data?.audio_base64) throw new Error("neural TTS returned no audio");
+  return `data:${data.mime || "audio/wav"};base64,${data.audio_base64}`;
+}
+
+let neuralAudio: HTMLAudioElement | null = null;
+
+/** Play a WAV data URL; resolves when playback ends. Replaces any current clip. */
+export function playNeuralAudio(dataUrl: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    stopNeuralAudio();
+    const audio = new Audio(dataUrl);
+    neuralAudio = audio;
+    audio.onended = () => {
+      if (neuralAudio === audio) neuralAudio = null;
+      resolve();
+    };
+    audio.onerror = () => {
+      if (neuralAudio === audio) neuralAudio = null;
+      reject(new Error("neural audio playback failed"));
+    };
+    audio.play().catch(reject);
+  });
+}
+
+export function stopNeuralAudio(): void {
+  if (neuralAudio) {
+    try { neuralAudio.pause(); } catch { /* noop */ }
+    neuralAudio = null;
+  }
+}
+
+// --- Audio Recorder (Web Audio PCM → 16 kHz mono WAV) ---
+//
+// We deliberately do NOT use MediaRecorder here. MediaRecorder with a timeslice
+// emits *fragmented* webm/opus chunks; concatenating them yields a blob whose
+// header/cues are incomplete, which faster-whisper (PyAV/ffmpeg) often fails to
+// decode → empty transcript (the "mic on but no text" bug). Capturing raw PCM
+// via Web Audio and encoding a clean 16 kHz mono WAV is what faster-whisper
+// expects natively, and it lets us take mid-recording WAV snapshots for live
+// streaming transcription.
 
 export interface AudioRecorder {
   start: () => Promise<void>;
+  /** Final 16 kHz mono WAV of the whole take. */
   stop: () => Promise<Blob>;
+  /** 16 kHz mono WAV of everything captured so far (for streaming interim STT). */
+  snapshot: () => Blob | null;
   isRecording: () => boolean;
 }
 
+const STT_TARGET_RATE = 16000;
+
+function floatTo16BitPCM(samples: Float32Array): Int16Array {
+  const out = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
+}
+
+// Box-filter downsample to the target rate (Whisper wants 16 kHz). Averaging
+// the source window is a cheap anti-alias that beats naive decimation.
+function downsampleTo(input: Float32Array, inRate: number, outRate: number): Float32Array {
+  if (outRate >= inRate || input.length === 0) return input;
+  const ratio = inRate / outRate;
+  const outLen = Math.floor(input.length / ratio);
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const start = Math.floor(i * ratio);
+    const end = Math.min(input.length, Math.floor((i + 1) * ratio));
+    let sum = 0, n = 0;
+    for (let j = start; j < end; j++) { sum += input[j]; n++; }
+    out[i] = n ? sum / n : input[start] || 0;
+  }
+  return out;
+}
+
+function encodeWav(samples: Int16Array, sampleRate: number): Blob {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const writeStr = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+  };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true); // PCM fmt chunk size
+  view.setUint16(20, 1, true); // format = PCM
+  view.setUint16(22, 1, true); // channels = mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // byte rate (mono, 16-bit)
+  view.setUint16(32, 2, true); // block align
+  view.setUint16(34, 16, true); // bits per sample
+  writeStr(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  let off = 44;
+  for (let i = 0; i < samples.length; i++, off += 2) view.setInt16(off, samples[i], true);
+  return new Blob([view], { type: "audio/wav" });
+}
+
 export function createAudioRecorder(): AudioRecorder {
-  let mediaRecorder: MediaRecorder | null = null;
-  let audioChunks: Blob[] = [];
+  let audioCtx: AudioContext | null = null;
+  let source: MediaStreamAudioSourceNode | null = null;
+  let processor: ScriptProcessorNode | null = null;
+  let mute: GainNode | null = null;
+  let stream: MediaStream | null = null;
+  let pcmChunks: Float32Array[] = [];
+  let inputRate = 48000;
   let recording = false;
+
+  const buildWav = (): Blob | null => {
+    if (!pcmChunks.length) return null;
+    let total = 0;
+    for (const c of pcmChunks) total += c.length;
+    if (total === 0) return null;
+    const merged = new Float32Array(total);
+    let o = 0;
+    for (const c of pcmChunks) { merged.set(c, o); o += c.length; }
+    const ds = downsampleTo(merged, inputRate, STT_TARGET_RATE);
+    return encodeWav(floatTo16BitPCM(ds), STT_TARGET_RATE);
+  };
 
   return {
     start: async () => {
-      audioChunks = [];
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-          ? "audio/webm;codecs=opus"
-          : "audio/webm",
-      });
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunks.push(event.data);
-        }
+      pcmChunks = [];
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      audioCtx = new Ctx();
+      inputRate = audioCtx.sampleRate;
+      source = audioCtx.createMediaStreamSource(stream);
+      // ScriptProcessor is deprecated but works reliably in WebView2 without the
+      // AudioWorklet module-loading dance. 4096-frame buffer ≈ 85 ms at 48 kHz.
+      processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      processor.onaudioprocess = (e) => {
+        if (!recording) return;
+        // Copy — the underlying buffer is reused by the audio thread.
+        pcmChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
       };
-
-      mediaRecorder.start(250); // Collect data every 250ms
+      // Route through a zero-gain node so onaudioprocess fires WITHOUT echoing
+      // the mic to the speakers.
+      mute = audioCtx.createGain();
+      mute.gain.value = 0;
+      source.connect(processor);
+      processor.connect(mute);
+      mute.connect(audioCtx.destination);
       recording = true;
     },
 
     stop: () => {
       return new Promise<Blob>((resolve) => {
         recording = false;
-
-        if (mediaRecorder && mediaRecorder.state !== "inactive") {
-          mediaRecorder.onstop = () => {
-            const blob = new Blob(audioChunks, {
-              type: mediaRecorder?.mimeType || "audio/webm",
-            });
-
-            // Stop all tracks on the stream
-            mediaRecorder?.stream.getTracks().forEach((track) => track.stop());
-            mediaRecorder = null;
-
-            resolve(blob);
-          };
-
-          mediaRecorder.stop();
-        } else {
-          resolve(new Blob([], { type: "audio/webm" }));
-        }
+        const wav = buildWav() || new Blob([], { type: "audio/wav" });
+        try { processor?.disconnect(); } catch { /* noop */ }
+        try { source?.disconnect(); } catch { /* noop */ }
+        try { mute?.disconnect(); } catch { /* noop */ }
+        try { stream?.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
+        try { void audioCtx?.close(); } catch { /* noop */ }
+        processor = null; source = null; mute = null; audioCtx = null; stream = null;
+        resolve(wav);
       });
     },
+
+    snapshot: () => buildWav(),
 
     isRecording: () => recording,
   };

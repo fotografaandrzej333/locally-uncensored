@@ -39,6 +39,10 @@ export function ChatInput({ onSend, onStop, isGenerating, pendingApproval, onApp
   const [isVoiceRecording, setIsVoiceRecording] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // Text already in the box when dictation started. Interim + final transcripts
+  // are written as base + transcript, so streaming chunks REPLACE (not stack)
+  // and pre-typed text is never wiped.
+  const dictationBaseRef = useRef('')
   const isTranscribing = useVoiceStore((s) => s.isTranscribing)
   const thinkingEnabled = useSettingsStore((s) => s.settings.thinkingEnabled)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
@@ -61,6 +65,21 @@ export function ChatInput({ onSend, onStop, isGenerating, pendingApproval, onApp
 
   const removeImage = (index: number) => {
     setImages(prev => prev.filter((_, i) => i !== index))
+  }
+
+  // Write a dictation transcript (interim or final) into the input as
+  // base + transcript, then resize the textarea. NEVER sends — the user
+  // reviews and presses Send (David 2026-06-06).
+  const applyDictation = (text: string) => {
+    const base = dictationBaseRef.current
+    const sep = base && !/\s$/.test(base) ? ' ' : ''
+    setInput(base + sep + text)
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto'
+        textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + 'px'
+      }
+    })
   }
 
   const handleSend = () => {
@@ -176,11 +195,15 @@ export function ChatInput({ onSend, onStop, isGenerating, pendingApproval, onApp
           />
 
           <VoiceButton
-            // Dictation fills the input and NEVER auto-sends — the user reviews
-            // and presses Send (David 2026-06-06). Append to any text already
-            // typed instead of replacing it, so a transcript can't wipe input.
-            onTranscript={(text) => { setInput((prev) => (prev.trim() ? prev.replace(/\s+$/, '') + ' ' + text : text)); requestAnimationFrame(() => { if (textareaRef.current) { textareaRef.current.style.height = 'auto'; textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + 'px' } }) }}
-            onRecordingChange={(r) => setIsVoiceRecording(r)}
+            // Streaming dictation: interim chunks arrive while talking, the final
+            // transcript replaces them on stop — both via applyDictation, which
+            // writes base + transcript and NEVER sends (user presses Send).
+            onInterim={applyDictation}
+            onTranscript={applyDictation}
+            onRecordingChange={(r) => {
+              if (r) dictationBaseRef.current = input
+              setIsVoiceRecording(r)
+            }}
             disabled={isGenerating}
           />
 

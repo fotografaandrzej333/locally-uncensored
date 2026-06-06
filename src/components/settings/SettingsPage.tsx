@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, type ReactNode, type ChangeEvent } from 'react'
-import { ArrowLeft, RotateCcw, Sun, Moon, Volume2, Check, X, Loader2, Shield, ChevronRight, GraduationCap, Lock, Sliders, Plug, Bot, Phone, User } from 'lucide-react'
+import { ArrowLeft, RotateCcw, Sun, Moon, Volume2, Check, X, Loader2, Shield, ChevronRight, GraduationCap, Lock, Sliders, Plug, Bot, Phone, User, Download, Mic } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useUIStore } from '../../stores/uiStore'
 import { SliderControl } from './SliderControl'
 import { PersonaPanel } from '../personas/PersonaPanel'
 import { useVoiceStore } from '../../stores/voiceStore'
-import { checkWhisperAvailable } from '../../api/voice'
+import { checkWhisperAvailable, checkTtsAvailable } from '../../api/voice'
 import { useAgentModeStore } from '../../stores/agentModeStore'
 import { FEATURE_FLAGS } from '../../lib/constants'
 import { getRecommendedAgentModels } from '../../lib/model-compatibility'
@@ -674,6 +674,11 @@ export function SettingsPage() {
   // `whisperInstallError` shows the last failure under the badge.
   const [whisperInstalling, setWhisperInstalling] = useState(false)
   const [whisperInstallError, setWhisperInstallError] = useState<string | null>(null)
+  // Neural TTS (Piper) install state — mirrors the whisper installer.
+  const [ttsStatus, setTtsStatus] = useState<{ available: boolean } | null>(null)
+  const [ttsLoading, setTtsLoading] = useState(true)
+  const [ttsInstalling, setTtsInstalling] = useState(false)
+  const [ttsInstallError, setTtsInstallError] = useState<string | null>(null)
   const [tab, setTab] = useState<SettingsTab>(() => {
     if (typeof window === 'undefined') return 'general'
     const stored = window.localStorage.getItem(SETTINGS_TAB_KEY)
@@ -712,8 +717,21 @@ export function SettingsPage() {
       .finally(() => setWhisperLoading(false))
   }
 
+  const refreshTts = () => {
+    setTtsLoading(true)
+    return checkTtsAvailable()
+      .then((s) => {
+        setTtsStatus(s)
+        // Same as STT: drive the read-aloud button availability from this probe
+        // so it lights up right after the in-app install.
+        voiceSettings.setTtsAvailable(!!s.available)
+      })
+      .finally(() => setTtsLoading(false))
+  }
+
   useEffect(() => {
     void refreshWhisper()
+    void refreshTts()
   }, [])
 
   // §24.9 — kick off the faster-whisper install, poll its status, then
@@ -749,6 +767,40 @@ export function SettingsPage() {
     } finally {
       setWhisperInstalling(false)
       await refreshWhisper()
+    }
+  }
+
+  // Install Piper neural TTS (pip + voice download) the same end-user way as
+  // whisper, polling install_tts_status until done, then re-checking the badge.
+  const handleInstallTts = async () => {
+    if (ttsInstalling) return
+    setTtsInstallError(null)
+    setTtsInstalling(true)
+    try {
+      await backendCall('install_tts')
+      const start = Date.now()
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        await new Promise((r) => setTimeout(r, 2000))
+        let s: { status?: string; error?: string } = {}
+        try {
+          s = await backendCall<{ status?: string; error?: string }>('install_tts_status')
+        } catch { /* transient — keep polling */ }
+        if (s.status === 'complete') break
+        if (s.status === 'error') {
+          setTtsInstallError(s.error || 'Install failed.')
+          break
+        }
+        if (Date.now() - start > 600_000) {
+          setTtsInstallError('Install is taking unusually long — check the logs / try again.')
+          break
+        }
+      }
+    } catch (e) {
+      setTtsInstallError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setTtsInstalling(false)
+      await refreshTts()
     }
   }
 
@@ -1044,27 +1096,29 @@ export function SettingsPage() {
         {/* ── Voice & Remote tab ────────────────────────── */}
         {tab === 'voice-remote' && (<>
           <Section title="Speech" defaultOpen>
-            <div className="flex items-center gap-3 text-[0.65rem]">
-              <span className="flex items-center gap-1">
-                {whisperLoading ? <Loader2 size={10} className="animate-spin text-gray-500" /> : whisperStatus?.available ? <Check size={10} className="text-green-500" /> : <X size={10} className="text-red-500" />}
-                <span className="text-gray-500">STT</span>
+            <p className="text-[0.55rem] text-gray-500 leading-snug">
+              Voice runs 100% locally — no cloud. Each engine is a one-time local install.
+            </p>
+
+            {/* Speech-to-Text — faster-whisper (powers the microphone / dictation) */}
+            <div className="flex items-center gap-2 text-[0.65rem]">
+              <span className="flex items-center gap-1.5">
+                {whisperLoading
+                  ? <Loader2 size={11} className="animate-spin text-gray-500" />
+                  : whisperStatus?.available ? <Check size={11} className="text-green-500" /> : <X size={11} className="text-red-500" />}
+                <Mic size={11} className="text-gray-400" />
+                <span className="text-gray-700 dark:text-gray-200 font-medium">Speech-to-Text</span>
+                <span className="text-gray-500">faster-whisper</span>
               </span>
-              <span className="flex items-center gap-1">
-                {ttsSupported ? <Check size={10} className="text-green-500" /> : <X size={10} className="text-red-500" />}
-                <span className="text-gray-500">TTS</span>
-              </span>
-              {/* §24.9 — Install affordance: the STT badge used to just show ✗
-                  with no fix. This installs faster-whisper into LU's Python
-                  and starts the STT server, then re-checks the badge. */}
               {!whisperLoading && whisperStatus && !whisperStatus.available && (
                 <button
                   onClick={() => void handleInstallWhisper()}
                   disabled={whisperInstalling}
                   className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded text-[0.6rem] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/30 hover:bg-blue-500/25 transition-colors disabled:opacity-50"
-                  title="Install faster-whisper so speech-to-text works"
+                  title="Download + install faster-whisper so the microphone works"
                 >
-                  {whisperInstalling ? <Loader2 size={9} className="animate-spin" /> : null}
-                  {whisperInstalling ? 'Installing…' : 'Install'}
+                  {whisperInstalling ? <Loader2 size={9} className="animate-spin" /> : <Download size={9} />}
+                  {whisperInstalling ? 'Installing…' : 'Download & Install'}
                 </button>
               )}
             </div>
@@ -1073,12 +1127,44 @@ export function SettingsPage() {
             )}
             {!whisperLoading && whisperStatus && !whisperStatus.available && !whisperInstalling && !whisperInstallError && (
               <p className="text-[0.55rem] text-gray-500 leading-snug">
-                Speech-to-text needs faster-whisper. Click Install to set it up locally (uses LU's Python; first run also downloads a small model).
+                Required for the microphone. Installs faster-whisper into LU's Python; first run also downloads a small model.
               </p>
             )}
-            <InlineToggle label="TTS Enabled" enabled={voiceSettings.ttsEnabled} onChange={() => voiceSettings.updateVoiceSettings({ ttsEnabled: !voiceSettings.ttsEnabled })} icon={<Volume2 size={11} className="text-gray-500" />} />
+
+            {/* Text-to-Speech — Piper neural (read responses aloud) */}
+            <div className="flex items-center gap-2 text-[0.65rem] pt-1">
+              <span className="flex items-center gap-1.5">
+                {ttsLoading
+                  ? <Loader2 size={11} className="animate-spin text-gray-500" />
+                  : ttsStatus?.available ? <Check size={11} className="text-green-500" /> : <X size={11} className="text-red-500" />}
+                <Volume2 size={11} className="text-gray-400" />
+                <span className="text-gray-700 dark:text-gray-200 font-medium">Text-to-Speech</span>
+                <span className="text-gray-500">Piper neural</span>
+              </span>
+              {!ttsLoading && ttsStatus && !ttsStatus.available && (
+                <button
+                  onClick={() => void handleInstallTts()}
+                  disabled={ttsInstalling}
+                  className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded text-[0.6rem] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/30 hover:bg-blue-500/25 transition-colors disabled:opacity-50"
+                  title="Download + install Piper neural TTS + a voice (~63 MB)"
+                >
+                  {ttsInstalling ? <Loader2 size={9} className="animate-spin" /> : <Download size={9} />}
+                  {ttsInstalling ? 'Installing…' : 'Download & Install'}
+                </button>
+              )}
+            </div>
+            {ttsInstallError && (
+              <p className="text-[0.55rem] text-red-400/90 leading-snug">{ttsInstallError}</p>
+            )}
+            {!ttsLoading && ttsStatus && !ttsStatus.available && !ttsInstalling && !ttsInstallError && (
+              <p className="text-[0.55rem] text-gray-500 leading-snug">
+                Required for read-aloud. Installs Piper + a neural voice locally (~63 MB).
+              </p>
+            )}
+
+            <InlineToggle label="Read responses aloud" enabled={voiceSettings.ttsEnabled} onChange={() => voiceSettings.updateVoiceSettings({ ttsEnabled: !voiceSettings.ttsEnabled })} icon={<Volume2 size={11} className="text-gray-500" />} />
             <div className="flex items-center justify-between">
-              <span className="text-[0.7rem] text-gray-500">Voice</span>
+              <span className="text-[0.7rem] text-gray-500">Fallback voice</span>
               <select
                 value={voiceSettings.ttsVoice}
                 onChange={(e) => voiceSettings.updateVoiceSettings({ ttsVoice: e.target.value })}

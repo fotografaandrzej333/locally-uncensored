@@ -5,11 +5,13 @@ import { useVoice } from "../../hooks/useVoice"
 
 interface Props {
   onTranscript: (text: string) => void
+  /** Live interim transcript while recording (streaming dictation). */
+  onInterim?: (text: string) => void
   onRecordingChange?: (isRecording: boolean) => void
   disabled?: boolean
 }
 
-export function VoiceButton({ onTranscript, onRecordingChange, disabled }: Props) {
+export function VoiceButton({ onTranscript, onInterim, onRecordingChange, disabled }: Props) {
   const { isRecording, isTranscribing, sttSupported, startRecording, stopRecording, recheckStt } = useVoice()
 
   useEffect(() => {
@@ -31,7 +33,7 @@ export function VoiceButton({ onTranscript, onRecordingChange, disabled }: Props
       }
     } else {
       onRecordingChange?.(true)
-      await startRecording()
+      await startRecording((interim) => onInterim?.(interim))
     }
   }
 

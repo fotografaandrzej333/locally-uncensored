@@ -158,6 +158,9 @@ pub struct AppState {
     /// (the STT badge had no way to fix a ✗). Mirrors the other per-installer
     /// states; `install_whisper` writes it, `install_whisper_status` reads it.
     pub whisper_install: Arc<Mutex<InstallState>>,
+    /// Progress/log state for the in-app Piper neural-TTS installer (mirrors
+    /// `whisper_install`); `install_tts` writes it, `install_tts_status` reads it.
+    pub tts_install: Arc<Mutex<InstallState>>,
     pub searxng_install: Mutex<InstallState>,
     pub searxng_available: AtomicBool,
     /// Resolved Python binary path. Empty string means "no real Python on
@@ -233,6 +236,7 @@ impl AppState {
             lmstudio_install: Arc::new(Mutex::new(InstallState::default())),
             python_install: Arc::new(Mutex::new(InstallState::default())),
             whisper_install: Arc::new(Mutex::new(InstallState::default())),
+            tts_install: Arc::new(Mutex::new(InstallState::default())),
             searxng_install: Mutex::new(InstallState::default()),
             searxng_available: AtomicBool::new(false),
             python_bin: Arc::new(Mutex::new(python_bin)),

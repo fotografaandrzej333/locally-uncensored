@@ -19,6 +19,9 @@ interface VoiceState {
   // Persisted settings
   sttEnabled: boolean;
   ttsEnabled: boolean;
+  /** Selected Piper neural voice id (e.g. "en_US-lessac-medium"). */
+  piperVoice: string;
+  /** Browser SpeechSynthesis voice — only the fallback when neural is off. */
   ttsVoice: string;
   ttsRate: number;
   ttsPitch: number;
@@ -30,6 +33,7 @@ interface VoiceState {
   setTranscript: (transcript: string) => void;
   setSttAvailable: (available: boolean) => void;
   setTtsAvailable: (available: boolean) => void;
+  setPiperVoice: (voice: string) => void;
   updateVoiceSettings: (
     settings: Partial<{
       sttEnabled: boolean;
@@ -59,6 +63,7 @@ export const useVoiceStore = create<VoiceState>()(
       // aktivieren". There is no auto-speak; this just shows/enables the
       // per-message read-aloud Speaker button when TTS is usable.
       ttsEnabled: true,
+      piperVoice: "en_US-lessac-medium",
       ttsVoice: "",
       ttsRate: 1.0,
       ttsPitch: 1.0,
@@ -70,6 +75,7 @@ export const useVoiceStore = create<VoiceState>()(
       setTranscript: (transcript) => set({ transcript }),
       setSttAvailable: (available) => set({ sttAvailable: available }),
       setTtsAvailable: (available) => set({ ttsAvailable: available }),
+      setPiperVoice: (voice) => set({ piperVoice: voice }),
 
       updateVoiceSettings: (settings) => set((state) => ({ ...state, ...settings })),
 
@@ -86,6 +92,7 @@ export const useVoiceStore = create<VoiceState>()(
       partialize: (state) => ({
         sttEnabled: state.sttEnabled,
         ttsEnabled: state.ttsEnabled,
+        piperVoice: state.piperVoice,
         ttsVoice: state.ttsVoice,
         ttsRate: state.ttsRate,
         ttsPitch: state.ttsPitch,

@@ -189,9 +189,13 @@ export async function transcribeAudio(audioBlob: Blob): Promise<string> {
       binary += String.fromCharCode(bytes[i]);
     }
     const audioBase64 = btoa(binary);
+    // Tauri maps the Rust snake_case params (audio_base64, content_type) to
+    // camelCase invoke keys — passing snake_case silently fails the command
+    // ("missing required key audioBase64") → every transcription returned
+    // nothing. THIS was the "mic records but no text" bug.
     const data = await backendCall("transcribe", {
-      audio_base64: audioBase64,
-      content_type: audioBlob.type || "audio/webm",
+      audioBase64,
+      contentType: audioBlob.type || "audio/wav",
     });
     if (data.error) throw new Error(data.error);
     return data.transcript || "";
@@ -242,11 +246,26 @@ export async function recheckTtsAvailable(): Promise<boolean> {
   return initTtsCheck();
 }
 
-/** Synthesize text to a playable WAV data URL via the local Piper voice. */
-export async function synthesizeNeural(text: string): Promise<string> {
-  const data = await backendCall<{ audio_base64?: string; mime?: string }>("synthesize", { text });
+/** Synthesize text to a playable WAV data URL via a local Piper voice. */
+export async function synthesizeNeural(text: string, voice?: string): Promise<string> {
+  const data = await backendCall<{ audio_base64?: string; mime?: string }>("synthesize", { text, voice });
   if (!data?.audio_base64) throw new Error("neural TTS returned no audio");
   return `data:${data.mime || "audio/wav"};base64,${data.audio_base64}`;
+}
+
+/** Download a Piper voice model on demand. Blocks until done (~63 MB). */
+export async function downloadPiperVoice(voice: string): Promise<void> {
+  await backendCall("download_voice", { voice });
+}
+
+/** Voice ids already present on disk — used to mark the Settings picker. */
+export async function listInstalledPiperVoices(): Promise<string[]> {
+  try {
+    if (isTauri()) return (await backendCall<string[]>("installed_piper_voices")) || [];
+    return [];
+  } catch {
+    return [];
+  }
 }
 
 let neuralAudio: HTMLAudioElement | null = null;
@@ -392,6 +411,12 @@ export function createAudioRecorder(): AudioRecorder {
       source.connect(processor);
       processor.connect(mute);
       mute.connect(audioCtx.destination);
+      // getUserMedia is awaited just above, which can drop the user-gesture
+      // activation → the AudioContext may start "suspended" and never fire
+      // onaudioprocess (= silent capture, empty WAV). Resume explicitly.
+      if (audioCtx.state === "suspended") {
+        try { await audioCtx.resume(); } catch { /* noop */ }
+      }
       recording = true;
     },
 

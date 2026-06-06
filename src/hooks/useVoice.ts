@@ -146,7 +146,7 @@ export function useVoice() {
       try {
         if (store.ttsAvailable) {
           try {
-            const url = await synthesizeNeural(text);
+            const url = await synthesizeNeural(text, store.piperVoice);
             await playNeuralAudio(url);
             return;
           } catch (err) {

@@ -6,7 +6,18 @@ import { useUIStore } from '../../stores/uiStore'
 import { SliderControl } from './SliderControl'
 import { PersonaPanel } from '../personas/PersonaPanel'
 import { useVoiceStore } from '../../stores/voiceStore'
-import { checkWhisperAvailable, checkTtsAvailable } from '../../api/voice'
+import { checkWhisperAvailable, checkTtsAvailable, downloadPiperVoice, listInstalledPiperVoices } from '../../api/voice'
+
+// Curated local neural (Piper) voices the user can pick. Selecting one not yet
+// on disk downloads it (~63 MB). Ids match rhasspy/piper-voices.
+const PIPER_VOICES: { id: string; label: string }[] = [
+  { id: 'en_US-lessac-medium', label: 'Lessac — US, neutral' },
+  { id: 'en_US-amy-medium', label: 'Amy — US, female' },
+  { id: 'en_US-ryan-high', label: 'Ryan — US, male (high)' },
+  { id: 'en_US-hfc_female-medium', label: 'HFC — US, female' },
+  { id: 'en_GB-alba-medium', label: 'Alba — UK, female' },
+  { id: 'en_GB-northern_english_male-medium', label: 'Northern — UK, male' },
+]
 import { useAgentModeStore } from '../../stores/agentModeStore'
 import { FEATURE_FLAGS } from '../../lib/constants'
 import { getRecommendedAgentModels } from '../../lib/model-compatibility'
@@ -667,7 +678,6 @@ export function SettingsPage() {
   const { settings, updateSettings, resetSettings } = useSettingsStore()
   const { setView } = useUIStore()
   const voiceSettings = useVoiceStore()
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [whisperStatus, setWhisperStatus] = useState<{ available: boolean; backend: string | null; error?: string } | null>(null)
   const [whisperLoading, setWhisperLoading] = useState(true)
   // §24.9 — in-app faster-whisper install. `installing` drives the spinner;
@@ -679,6 +689,10 @@ export function SettingsPage() {
   const [ttsLoading, setTtsLoading] = useState(true)
   const [ttsInstalling, setTtsInstalling] = useState(false)
   const [ttsInstallError, setTtsInstallError] = useState<string | null>(null)
+  // Piper voice picker state.
+  const [installedVoices, setInstalledVoices] = useState<string[]>([])
+  const [voiceBusy, setVoiceBusy] = useState(false)
+  const [voiceError, setVoiceError] = useState<string | null>(null)
   const [tab, setTab] = useState<SettingsTab>(() => {
     if (typeof window === 'undefined') return 'general'
     const stored = window.localStorage.getItem(SETTINGS_TAB_KEY)
@@ -692,18 +706,6 @@ export function SettingsPage() {
     }
   }, [tab])
 
-  const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window
-
-  useEffect(() => {
-    if (!ttsSupported) return
-    const loadVoices = () => {
-      const v = speechSynthesis.getVoices()
-      if (v.length > 0) setVoices(v)
-    }
-    loadVoices()
-    speechSynthesis.addEventListener('voiceschanged', loadVoices)
-    return () => speechSynthesis.removeEventListener('voiceschanged', loadVoices)
-  }, [ttsSupported])
 
   const refreshWhisper = () => {
     setWhisperLoading(true)
@@ -729,9 +731,12 @@ export function SettingsPage() {
       .finally(() => setTtsLoading(false))
   }
 
+  const refreshVoices = () => listInstalledPiperVoices().then(setInstalledVoices).catch(() => {})
+
   useEffect(() => {
     void refreshWhisper()
     void refreshTts()
+    void refreshVoices()
   }, [])
 
   // §24.9 — kick off the faster-whisper install, poll its status, then
@@ -801,6 +806,24 @@ export function SettingsPage() {
     } finally {
       setTtsInstalling(false)
       await refreshTts()
+    }
+  }
+
+  // Pick a Piper voice. If it isn't on disk yet, download it (~63 MB) first,
+  // then re-check the installed list + TTS availability.
+  const handlePickVoice = async (id: string) => {
+    voiceSettings.setPiperVoice(id)
+    setVoiceError(null)
+    if (installedVoices.includes(id)) return
+    setVoiceBusy(true)
+    try {
+      await downloadPiperVoice(id)
+      await refreshVoices()
+      await refreshTts()
+    } catch (e) {
+      setVoiceError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setVoiceBusy(false)
     }
   }
 
@@ -1163,19 +1186,29 @@ export function SettingsPage() {
             )}
 
             <InlineToggle label="Read responses aloud" enabled={voiceSettings.ttsEnabled} onChange={() => voiceSettings.updateVoiceSettings({ ttsEnabled: !voiceSettings.ttsEnabled })} icon={<Volume2 size={11} className="text-gray-500" />} />
-            <div className="flex items-center justify-between">
-              <span className="text-[0.7rem] text-gray-500">Fallback voice</span>
+            {/* Neural voice picker (Piper) — replaces the old Microsoft/browser
+                voices (David 2026-06-06). Picking one not yet on disk downloads
+                it (~63 MB). Browser-only rate/pitch knobs dropped — they didn't
+                apply to Piper. */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[0.7rem] text-gray-500 flex items-center gap-1">
+                Voice {voiceBusy && <Loader2 size={10} className="animate-spin text-gray-500" />}
+              </span>
               <select
-                value={voiceSettings.ttsVoice}
-                onChange={(e) => voiceSettings.updateVoiceSettings({ ttsVoice: e.target.value })}
-                className="max-w-[180px] px-1.5 py-0.5 rounded bg-transparent border border-white/8 text-[0.65rem] text-gray-300 focus:outline-none"
+                value={voiceSettings.piperVoice}
+                onChange={(e) => void handlePickVoice(e.target.value)}
+                disabled={voiceBusy}
+                className="max-w-[210px] px-1.5 py-0.5 rounded bg-transparent border border-white/8 text-[0.65rem] text-gray-300 focus:outline-none disabled:opacity-50"
               >
-                <option value="">Default</option>
-                {voices.map((v) => <option key={v.name} value={v.name}>{v.name}</option>)}
+                {PIPER_VOICES.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}{installedVoices.includes(v.id) ? '' : ' — download'}
+                  </option>
+                ))}
               </select>
             </div>
-            <SliderControl label="Rate" value={voiceSettings.ttsRate} min={0.5} max={2} step={0.1} onChange={(v) => voiceSettings.updateVoiceSettings({ ttsRate: v })} />
-            <SliderControl label="Pitch" value={voiceSettings.ttsPitch} min={0.5} max={2} step={0.1} onChange={(v) => voiceSettings.updateVoiceSettings({ ttsPitch: v })} />
+            {voiceBusy && <p className="text-[0.55rem] text-gray-500 leading-snug">Downloading voice (~63 MB)…</p>}
+            {voiceError && <p className="text-[0.55rem] text-red-400/90 leading-snug">{voiceError}</p>}
           </Section>
 
           <Section title="Remote Access">

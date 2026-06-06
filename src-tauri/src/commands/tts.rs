@@ -5,8 +5,8 @@
 //! one-shot per utterance: `python -m piper -m voice.onnx -c voice.onnx.json
 //! -f out.wav` with the text on stdin. One-shot (vs a persistent server) costs
 //! ~1-2 s of ONNX model load per "speak", which is acceptable for chat TTS and
-//! avoids a long-lived process + version-specific Python API. The voice model
-//! is downloaded by `install_tts` (commands/install.rs) into the app-data dir.
+//! avoids a long-lived process + version-specific Python API. Voice models are
+//! downloaded on demand into `<app_data>/piper_voices/`.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -24,24 +24,38 @@ use crate::state::AppState;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// The default Piper voice LU downloads + speaks with. Medium-quality English,
-/// ~63 MB. The two files land in `<app_data>/piper_voices/`.
+/// ~63 MB. Files land in `<app_data>/piper_voices/`.
 pub const PIPER_VOICE: &str = "en_US-lessac-medium";
 
-/// Resolve `(model.onnx, model.onnx.json)` paths for the bundled voice under
-/// the app-data piper_voices dir.
-pub fn piper_voice_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
+/// Reject voice names that aren't a plain Piper voice id (defence-in-depth — the
+/// name is interpolated into a download URL + a file path). Real ids look like
+/// `en_US-lessac-medium` / `en_GB-alba-medium`.
+fn is_valid_voice(voice: &str) -> bool {
+    !voice.is_empty()
+        && voice.len() < 64
+        && voice.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn piper_voices_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("no app data dir: {}", e))?
         .join("piper_voices");
-    let onnx = dir.join(format!("{}.onnx", PIPER_VOICE));
-    let config = dir.join(format!("{}.onnx.json", PIPER_VOICE));
-    Ok((onnx, config))
+    Ok(dir)
 }
 
-/// Whether neural TTS is usable: `import piper` succeeds AND the voice model is
-/// present. The Settings badge + the chat SpeakerButton gate on this.
+/// `(model.onnx, model.onnx.json)` for a voice id under the piper_voices dir.
+pub fn piper_voice_paths(app: &tauri::AppHandle, voice: &str) -> Result<(PathBuf, PathBuf), String> {
+    let dir = piper_voices_dir(app)?;
+    Ok((
+        dir.join(format!("{}.onnx", voice)),
+        dir.join(format!("{}.onnx.json", voice)),
+    ))
+}
+
+/// Whether neural TTS is usable: `import piper` succeeds AND the DEFAULT voice
+/// model is present. The Settings badge + the chat SpeakerButton gate on this.
 #[tauri::command]
 pub fn tts_status(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     let python = crate::commands::install::resolve_lu_python(state.inner());
@@ -55,7 +69,7 @@ pub fn tts_status(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<s
         piper_importable = cmd.output().map(|o| o.status.success()).unwrap_or(false);
     }
 
-    let voice_ready = piper_voice_paths(&app).map(|(onnx, _)| onnx.exists()).unwrap_or(false);
+    let voice_ready = piper_voice_paths(&app, PIPER_VOICE).map(|(onnx, _)| onnx.exists()).unwrap_or(false);
 
     Ok(serde_json::json!({
         "available": piper_importable && voice_ready,
@@ -64,11 +78,76 @@ pub fn tts_status(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<s
     }))
 }
 
-/// Synthesize `text` to a 22.05 kHz mono WAV and return it base64-encoded for
-/// the frontend to play. Runs the Piper CLI one-shot.
+/// Voice ids already downloaded under the piper_voices dir (file stems of the
+/// `*.onnx` models). The Settings picker marks these as installed.
+#[tauri::command]
+pub fn installed_piper_voices(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let dir = match piper_voices_dir(&app) {
+        Ok(d) => d,
+        Err(_) => return Ok(vec![]),
+    };
+    let mut out = vec![];
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if let Some(stem) = name.strip_suffix(".onnx") {
+                out.push(stem.to_string());
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Download a specific Piper voice model into the piper_voices dir. Blocking —
+/// the frontend awaits it with a spinner (no separate progress channel; a voice
+/// is ~63 MB). Idempotent: re-downloading an existing voice just no-ops fast.
+#[tauri::command]
+pub fn download_voice(
+    voice: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    if !is_valid_voice(&voice) {
+        return Err(format!("invalid voice id: {}", voice));
+    }
+    let python = crate::commands::install::resolve_lu_python(state.inner());
+    if python.is_empty() || !crate::python::is_real_python(&python) {
+        return Err("no_python: install Python first.".to_string());
+    }
+    let dir = piper_voices_dir(&app)?;
+    let _ = std::fs::create_dir_all(&dir);
+
+    let mut cmd = Command::new(&python);
+    cmd.args([
+        "-m",
+        "piper.download_voices",
+        &voice,
+        "--download-dir",
+        &dir.to_string_lossy(),
+    ])
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let output = cmd.output().map_err(|e| format!("could not start voice download: {}", e))?;
+    if !output.status.success() {
+        return Err(format!("voice download failed: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+    let (onnx, _) = piper_voice_paths(&app, &voice)?;
+    if !onnx.exists() {
+        return Err("voice download reported success but the model is missing".to_string());
+    }
+    Ok(serde_json::json!({ "ok": true, "voice": voice }))
+}
+
+/// Synthesize `text` to a WAV and return it base64-encoded for the frontend to
+/// play. `voice` is an optional Piper voice id (defaults to PIPER_VOICE). Runs
+/// the Piper CLI one-shot.
 #[tauri::command]
 pub fn synthesize(
     text: String,
+    voice: Option<String>,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
@@ -77,14 +156,22 @@ pub fn synthesize(
         return Err("empty text".to_string());
     }
 
+    let voice = match voice {
+        Some(v) if is_valid_voice(&v) => v,
+        _ => PIPER_VOICE.to_string(),
+    };
+
     let python = crate::commands::install::resolve_lu_python(state.inner());
     if python.is_empty() || !crate::python::is_real_python(&python) {
         return Err("no_python: install Python first.".to_string());
     }
 
-    let (onnx, config) = piper_voice_paths(&app)?;
+    let (onnx, config) = piper_voice_paths(&app, &voice)?;
     if !onnx.exists() || !config.exists() {
-        return Err("no_voice: neural TTS not installed — install it in Settings → Voice & Remote.".to_string());
+        return Err(format!(
+            "no_voice: the '{}' voice isn't downloaded — pick/install it in Settings → Voice & Remote.",
+            voice
+        ));
     }
 
     let stamp = std::time::SystemTime::now()
@@ -111,10 +198,9 @@ pub fn synthesize(
     cmd.creation_flags(CREATE_NO_WINDOW);
 
     let mut child = cmd.spawn().map_err(|e| format!("Failed to start piper: {}", e))?;
-    // Feed the text on stdin, then close it so piper proceeds.
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(text.as_bytes());
-        // dropped at end of block → stdin closed
+        // dropped at end of block → stdin closed so piper proceeds
     }
     let output = child
         .wait_with_output()

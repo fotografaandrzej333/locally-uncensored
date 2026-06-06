@@ -644,12 +644,6 @@ export function DiscoverModels({ category, search = '', searchSubmitToken = 0 }:
 
   return (
     <div className="space-y-4">
-      {!isText && (
-        <p className="text-[0.65rem] text-gray-500 text-center">
-          Requires ComfyUI configured in Model Manager.
-        </p>
-      )}
-
       {/* Sub-tabs: Uncensored / Mainstream — for all text sources and image/video */}
       {(isText || isImage || isVideo) && (
         <div className="flex gap-4 mb-4">

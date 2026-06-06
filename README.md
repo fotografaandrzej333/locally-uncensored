@@ -37,54 +37,55 @@ No cloud. No data collection. No API keys. Auto-detects 12 local backends. Your 
 
 ## v2.5.0 — Current Release
 
-**Minor release. 30+ changes — headline Codex / Agent sprint (Sprint A / B / C ported from `uselu`), eight reporter-facing fixes, two new pieces of UI (GPU picker, chatbot-export importer), production hardening, iteration-cap bump (200 iters / 400 tool calls, from 25 / 50).** Bundles all v2.4.9 contents.
+**The biggest update yet.** v2.5.0 brings a complete visual refresh, end-to-end local image *and* video creation, a smarter setup for small local models, on-device voice (speech-to-text + read-aloud), and a long list of reliability fixes — on top of the full Coding Agent sprint. Everything still runs 100% on your own machine, and your chats, models, and settings carry over automatically.
 
 Auto-update prompts on next launch.
 
-### What's fixed
-- **Ollama auto-detection persists across launches** (B1 — cinemazverev). User's deliberate re-enable is now authoritative; auto-detect can only add backends, never remove ones the user explicitly turned on.
-- **Multi-backend modal persists Ollama choice** (B2 — vanja-san). Picking Ollama in the modal, closing it, and re-opening now keeps Ollama selected instead of resetting to "Auto".
-- **LM Studio per-model load/unload backend** (B3 — THobbs23). Three new Tauri commands (`lmstudio_list_loaded`, `lmstudio_load_model`, `lmstudio_unload_model`) ship now; the UI integration lands in the next hotfix.
-- **Ollama actually uses the context window you set** (AA — kj103x). New "Context window (Ollama)" input under Settings → Generation. Pre-v2.5.0 LU never passed `num_ctx`, so Ollama silently used its 2048 default and clipped RAG payloads + long-turn chats regardless of the model's real context size. 0 = let Ollama decide (default). Cloud providers ignore the field.
-- **Downloaded but invisible — provider-mismatch + LM Studio installed-badge** (Y — Aldrich Ironhart, two-layer). Discover's download routing now follows the *active chat picker* instead of "whichever backend is enabled" — so a user chatting on LM Studio no longer ends up with the file in Ollama (or vice versa). And the INSTALLED badge now also matches against LM Studio's scanner output, not just Ollama tags — so GGUFs in LM Studio's scan dir light up correctly after a restart.
-- **Hermes 3 phantom-complete fixed + Hermes 3 entries retargeted** (Z — leonsk29 GH #48). Pre-v2.5.0 Ollama streams that ended without an explicit `success` line were treated as success, so the badge flipped to "Completed" even when the pull hit `400: Repository is not GGUF compatible`. v2.5.0 surfaces the real error on the card. Plus all three Hermes 3 GGUF entries (3B / 8B / 70B) switched from `bartowski/...` (broken on current Ollama) to `mradermacher/Hermes-3-Llama-*-GGUF` (llama.cpp-compatible).
+### ✨ Design & everyday UX
+- **Refreshed look** — a calmer black-and-grey dark theme with light, floating panels, plus a one-click light/dark toggle.
+- **Your own profile picture** beside your messages; the AI always shows the app's own mark, so the two are easy to tell apart.
+- **Action bar on every message** — copy, regenerate, edit, or read aloud.
+- **Unlimited chat history** — chats and memories now live in a local database, so long, image-heavy threads no longer get cut off (existing data migrates over automatically).
+- **Editable memory** — a brain icon in the top bar lets you view, add, and delete what the assistant remembers.
 
-### What's new — UI (Settings)
-- **GPU picker** (BB — BobbyT). New Settings → Hardware section lists every detected GPU (via nvidia-smi / rocm-smi / lspci on Linux / wmic on Windows / system_profiler on macOS) and lets you pin a vendor + indices. Forwards the right env-var family on next Ollama / ComfyUI spawn: `CUDA_VISIBLE_DEVICES` (NVIDIA), `HIP_VISIBLE_DEVICES + ROCR_VISIBLE_DEVICES` (AMD), `ONEAPI_DEVICE_SELECTOR` (Intel level_zero). "Auto" leaves env-vars unset — matches pre-v2.5.0 behaviour.
-- **Chatbot-export importer** (CC — MikeS++). New Settings section parses ChatGPT, Claude, and Gemini exports (`.json` or unmodified `.zip`) and feeds each conversation into the active chat's RAG store. Detects platform from the JSON shape, lets you pick conversations via per-entry checkboxes + Select all / none. Stays on your machine.
+### 🎨 Image & video creation
+- **One Create tab** for both image and video, fully offline.
+- **Four modes** — Text-to-Image, Image-to-Image, Text-to-Video, and Image-to-Video, switchable right from the main screen.
+- **Model picker next to Generate**, plus a flicker-free full-screen viewer with zoom, pan, and the exact settings behind each result.
+- **LoRA, VAE override, CLIP-skip**, negative prompts, prompt history, and one-click MP4 support.
+- **Guided engine setup** — auto-installs the local image/video engine (and Python if needed) with clear recovery if startup stalls.
 
-### What's new — codex / agent (Sprint A / B / C from uselu)
-- **Architect / Editor split** — separate "architect" model plans (no tools), regular Codex model applies (with tools). Aider-style, ~30 % better edit accuracy on multi-file refactors. Toggle in Settings → Agent → Codex Agent.
-- **Repo-Map injection (Aider PageRank)** — bridge ranks repo files by import-graph PageRank, top-N (default 20, clamped 1–200) get injected into the editor system prompt.
-- **Multi-File Stage-and-Approve** — `file_write` calls queue as pending changes for per-file review instead of touching disk directly.
-- **Test-Driven Loop** — new `run_tests` tool lets the agent invoke the project's test runner, watch failures, iterate on a fix.
-- **Typed git + gh tools** — `git_status`, `git_commit`, `git_push`, `git_log`, `git_diff`, `gh_pr_create` replace previous shell-wrapped patterns.
-- **Code-Review mode** — read-only agent for PR pre-check (file_write + shell_execute blocked, system prompt switched to "inline comments only").
-- **Long-running background shell tasks** — four tools (`shell_execute_background`, `shell_task_status`, `shell_task_kill`, `shell_task_list`) for dev servers / multi-minute builds that shouldn't block the turn.
-- **Multi-Repo Agent** — hold multiple workspaces in parallel, switch between them per chat.
-- **`.lurules` per-repo config** — pin per-project agent conventions without leaking into other repos.
-- **`pr_resume`** — pick up an in-flight PR workflow where it stopped instead of starting over.
-- **`project_init`** — scaffold new projects (directory layout, README stub, language-appropriate gitignore, optional CI starter).
-- **Parallel sub-agents** — sub-agent branches now run concurrently.
-- **Diff rendering for `file_write`** — agent surface shows a real diff per proposal.
-- **Per-chat workspace picker for Agent + Codex** — both surfaces share the same workspace concept and picker dialog.
+### 💬 Chat & model control
+- **Create images and videos straight from chat**, with honest limits instead of silent surprises when a model can't do something.
+- **Adjustable context window** with instant reload, plus a token-usage meter based on the model's real numbers.
+- **Load or unload any local model** from memory with one click.
 
-### What's hardened
-- **Structured logger with key-substring redaction** (B4, `src/lib/logger.ts`). Any object key containing `token` / `key` / `secret` / `password` / `auth` is redacted before emit so log lines pasted into bug reports don't leak credentials.
-- **`console.log` stripped from production builds** (B5). `vite.config.ts` esbuild `pure` drops the calls in `vite build` output; errors and warnings stay.
-- **Iteration cap bump** — `agentMaxIterations` 25 → 200, `agentMaxToolCalls` 50 → 400. Real scaffold→install→fix→verify loops on a 35B local model hit the old caps mid-useful-work; the new ones are roomy enough for multi-file refactors yet still bounded.
+### 🪶 Small models & tool calling
+- **Small-Model Mode** — one switch tunes the app so compact 3B–8B models follow instructions and use tools far more reliably (off by default).
+- **New tiny uncensored tool-using models** (under 4 GB) and **size-class filters** in Discover so you can find models that fit your machine.
+
+### 🤖 Coding Agent (Sprint A / B / C)
+- A dedicated agent that reads your files, writes code, and runs commands in a real project folder — with whole-codebase awareness (Repo-Map / Aider PageRank), a plan-first Architect mode, review-before-apply diffs, a read-only Code-Review mode, per-project `.lurules`, long-running background jobs, a one-step test runner, project scaffolding, and built-in typed Git/GitHub tools. Iteration caps raised to 200 iterations / 400 tool calls.
+
+### 🎙️ Voice
+- **Talk to type** with live, on-device transcription (nothing is ever sent automatically), and **read responses aloud** in a natural local voice — both set up with one-click installers.
+
+### 📦 Model Manager & downloads
+- **One-click downloads** for chat, image, and video models across Ollama and LM Studio, with resumable multi-part downloads, a size confirmation for very large models, clear badges (INSTALLED / AGENT / CPU-FRIENDLY / Fits GPU), and built-in search of online libraries.
+- **GPU picker** (Settings → Hardware) to pin a vendor + card on multi-GPU machines, and a **chatbot-export importer** that brings your ChatGPT, Claude, and Gemini history into your local knowledge store.
+
+### 🔧 Reliability
+- Your data survives restarts and updates; image/video generation no longer freezes; ComfyUI startup crashes are detected in seconds; a phantom GPU entry is gone; credentials are redacted from logs and `console.log` is stripped from production builds.
+
+### ☁️ Optional cloud waitlist
+- A small, dismissible badge to be notified if a hosted version ever arrives — it only sends an email address you choose to type in. Everything else stays on your device.
 
 ### Stability
-- `vitest`: **2501 tests** green (previously 2312; +189 across new bg_tasks, repo_map, architect-split, stage-mode, code-review-mode, logger, .lurules, pr_resume, project_init paths + AA num_ctx forwarding + CC chatbot-export parser).
-- `cargo test`: **122 passed** (previously 100; +22 across `bg_tasks`, `repo_map`, and `gpu` modules).
-- `tsc --noEmit`: clean. `cargo check`: clean (pre-existing dead-code warnings only).
-- No breaking changes; settings auto-default, cap bump is upward-only.
+- Frontend test suite: **2,725 tests** green. Rust test suite + production build green. No breaking changes — settings auto-default and your data migrates forward.
 
-For previous release notes (v2.4.9 — 5 bugs + 2 features, v2.4.8 — 9 changes, v2.4.6 — 1 bug, v2.4.5 — 14 bugs), see [CHANGELOG.md](CHANGELOG.md).
+For previous release notes (v2.4.9, v2.4.8, v2.4.6, v2.4.5), see [CHANGELOG.md](CHANGELOG.md).
 
-Reporters with code shipping in this release: cinemazverev, vanja-san, THobbs23, Kj103x, Aldrich Ironhart, leonsk29, BobbyT, MikeS++.
-
-Contributors with feature requests still queued for v2.5.1: juliandiggins-stack.
+Thanks to the community reporters and contributors whose feedback shaped this release: cinemazverev, vanja-san, THobbs23, kj103x, Aldrich Ironhart, leonsk29, BobbyT, MikeS++, and many more in Discord and GitHub.
 
 ---
 

@@ -13,6 +13,7 @@ import { BackendSelector } from '../onboarding/BackendSelector'
 import { ErrorBoundary } from '../ui/ErrorBoundary'
 import { useUIStore } from '../../stores/uiStore'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { useCompareStore } from '../../stores/compareStore'
 import { useProviderStore } from '../../stores/providerStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useModelStore } from '../../stores/modelStore'
@@ -28,6 +29,9 @@ import { Titlebar } from './Titlebar'
 export function AppShell() {
   const { currentView } = useUIStore()
   const { settings, updateSettings } = useSettingsStore()
+  // A/B Compare takes over the chat area; hide the left chat sidebar entirely
+  // while comparing (David 2026-06-06) so the two model columns get full width.
+  const isComparing = useCompareStore((s) => s.isComparing)
   const onboardingDone = useSettingsStore((s) => s.settings.onboardingDone)
   const [restoring, setRestoring] = useState(false)
 
@@ -578,7 +582,7 @@ export function AppShell() {
         <StaleModelsBanner />
         <StorageQuotaToast />
         <div className="flex-1 flex overflow-hidden gap-2 p-2">
-          <Sidebar />
+          {!isComparing && <Sidebar />}
           <main className={`overflow-hidden rounded-xl bg-white dark:bg-[#1e1e1e] ring-1 ring-black/[0.04] dark:ring-white/[0.05] ${currentView === 'models' ? 'flex-none w-[85%] mx-auto' : 'flex-1'}`}>
             {currentView === 'chat' && <ErrorBoundary><ChatView /></ErrorBoundary>}
             {currentView === 'models' && <ErrorBoundary><ModelManager /></ErrorBoundary>}

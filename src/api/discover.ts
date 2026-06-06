@@ -367,6 +367,15 @@ function sortByRelease(models: DiscoverModel[]): DiscoverModel[] {
 /** Uncensored / abliterated GGUF models — the core of LU. One entry per size variant. */
 export function getUncensoredTextModels(): DiscoverModel[] {
   return sortByRelease([
+    // ── 2026 SOTA sub-4GB UNCENSORED tool caller (deep-researched 2026-06-06,
+    //    Ultra-Lightweight weight class). Abliterated Qwen3-4B keeps the native
+    //    Hermes tool template. A/B its tool reliability (abliteration can dent
+    //    function calling); run thinking-OFF. ──
+    // Uses the huihui Ollama-native tag (NOT a repacked HF GGUF): its template
+    // carries the full Hermes tool scaffold, so Ollama accepts the `tools` array.
+    // The DevQuasar HF-GGUF repack dropped the tool template → Ollama returned
+    // "does not support tools" for every tool call (verified live 2026-06-06).
+    { name: 'Qwen3 4B Abliterated', description: 'huihui Qwen3 4B abliterated — uncensored + native Hermes tool calling in under 4GB (Ollama). Run thinking-OFF for reliable tool calls. Apache-2.0 base.', pulls: '20K+', tags: ['4B', 'Q4_K_M', '2.4 GB', 'Tools', 'Uncensored'], updated: 'Hot', agent: true, lightweight: true, released: '2025-05', ollamaModel: 'huihui_ai/qwen3-abliterated:4b', sizeGB: 2.4 },
     // ── HOT: Hermes 3 ──
     // Bug Z/b v2.5.0 — leonsk29 GH #48. Pre-v2.5.0 these pointed at
     // `bartowski/Hermes-3-Llama-*-GGUF`. leon's 2026-05-26 CLI repro
@@ -446,6 +455,13 @@ export function getUncensoredTextModels(): DiscoverModel[] {
 /** Mainstream GGUF models — not uncensored but excellent for specific tasks. All URLs verified. */
 export function getMainstreamTextModels(): DiscoverModel[] {
   return sortByRelease([
+    // ── 2026 SOTA sub-4GB TOOL CALLERS (deep-researched + adversarially
+    //    verified 2026-06-06). All run in UNDER 4GB VRAM/RAM (Ultra-Lightweight
+    //    weight class), commercially licensed (Apache-2.0 / MIT), native tool
+    //    calling. The curated "good tool calls on weak hardware" set. ──
+    { name: 'Qwen3 4B', description: 'Qwen3 4B — best all-round sub-4GB tool caller (BFCL ~62%). Native Hermes-style tools, 256K context. Tip: run thinking-OFF for reliable tool calls. Apache-2.0.', pulls: '5M+', tags: ['4B', 'Q4_K_M', '2.4 GB', 'Tools'], updated: 'Hot', agent: true, lightweight: true, released: '2025-05', downloadUrl: HF('Qwen/Qwen3-4B-GGUF', 'Qwen3-4B-Q4_K_M.gguf'), filename: 'Qwen3-4B-Q4_K_M.gguf', sizeGB: 2.4 },
+    { name: 'IBM Granite 4.0 Micro', description: 'IBM Granite 4.0 Micro (3B) — agentic + coding tool caller. BFCL v3 59.98 (best third-party-sourced sub-4GB score). Native tool calling, runs CPU-only. Apache-2.0.', pulls: '50K+', tags: ['3B', 'Q4_K_M', '2 GB', 'Tools'], updated: 'Hot', agent: true, lightweight: true, released: '2025-10', downloadUrl: HF('ibm-granite/granite-4.0-micro-GGUF', 'granite-4.0-micro-Q4_K_M.gguf'), filename: 'granite-4.0-micro-Q4_K_M.gguf', sizeGB: 2 },
+    { name: 'Phi-4 Mini', description: 'Microsoft Phi-4-mini (3.8B) — disciplined JSON-schema function calling, 128K context. Different tool format (<|tool|> tokens) than the Qwen/Granite trio, adds diversity. MIT.', pulls: '500K+', tags: ['3.8B', 'Q4_K_M', '2.4 GB', 'Tools'], updated: 'Hot', agent: true, lightweight: true, released: '2025-02', downloadUrl: HF('lmstudio-community/Phi-4-mini-instruct-GGUF', 'Phi-4-mini-instruct-Q4_K_M.gguf'), filename: 'Phi-4-mini-instruct-Q4_K_M.gguf', sizeGB: 2.4 },
     // ── Gemma 4 (April 2026) ──
     { name: 'Gemma 4 31B', description: 'Google Gemma 4 31B — frontier dense model, native tools + vision. 256K context.', pulls: '100K+', tags: ['31B', 'Q4_K_M', '17 GB'], updated: 'Hot', agent: true, released: '2026-04', downloadUrl: HF('unsloth/gemma-4-31B-it-GGUF', 'gemma-4-31B-it-Q4_K_M.gguf'), filename: 'gemma-4-31B-it-Q4_K_M.gguf', sizeGB: 17 },
     { name: 'Gemma 4 26B MoE', description: 'Gemma 4 26B MoE — 26B brain, runs like 4B. Tools + vision. Apache 2.0.', pulls: '100K+', tags: ['26B', 'Q4_K_XL', '16 GB'], updated: 'Hot', agent: true, released: '2026-04', downloadUrl: HF('unsloth/gemma-4-26B-A4B-it-GGUF', 'gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf'), filename: 'gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf', sizeGB: 16 },
@@ -496,8 +512,7 @@ export function getMainstreamTextModels(): DiscoverModel[] {
     { name: 'DeepSeek R1 Qwen 14B', description: 'DeepSeek R1 distilled into Qwen 14B — stronger reasoning.', pulls: '2M+', tags: ['14B', 'Q4_K_M', '9 GB'], updated: 'Popular', released: '2025-01', downloadUrl: HF('unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF', 'DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf'), filename: 'DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf', sizeGB: 9 },
     { name: 'DeepSeek R1 Qwen 32B', description: 'DeepSeek R1 distilled into Qwen 32B — powerful reasoning.', pulls: '2M+', tags: ['32B', 'Q4_K_M', '19 GB'], updated: 'Popular', released: '2025-01', downloadUrl: HF('unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF', 'DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf'), filename: 'DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf', sizeGB: 19 },
     { name: 'DeepSeek R1 Llama 70B', description: 'DeepSeek R1 distilled into Llama 70B — maximum reasoning.', pulls: '2M+', tags: ['70B', 'Q4_K_M', '42 GB'], updated: 'Popular', released: '2025-01', downloadUrl: HF('unsloth/DeepSeek-R1-Distill-Llama-70B-GGUF', 'DeepSeek-R1-Distill-Llama-70B-Q4_K_M.gguf'), filename: 'DeepSeek-R1-Distill-Llama-70B-Q4_K_M.gguf', sizeGB: 42 },
-    // ── Qwen 3 (May 2025) ──
-    { name: 'Qwen 3 4B', description: 'Qwen 3 4B — fast, lightweight, solid for small GPUs.', pulls: '5M+', tags: ['4B', 'Q4_K_M', '2.3 GB'], updated: 'Popular', released: '2025-05', downloadUrl: HF('unsloth/Qwen3-4B-GGUF', 'Qwen3-4B-Q4_K_M.gguf'), filename: 'Qwen3-4B-Q4_K_M.gguf', sizeGB: 2.3 },
+    // ── Qwen 3 (May 2025) — 4B moved into the sub-4GB tool-caller group above ──
     { name: 'Qwen 3 8B', description: 'Qwen 3 8B — top-tier reasoning and coding. Thinking mode.', pulls: '5M+', tags: ['8B', 'Q4_K_M', '5 GB'], updated: 'Popular', agent: true, released: '2025-05', downloadUrl: HF('unsloth/Qwen3-8B-GGUF', 'Qwen3-8B-Q4_K_M.gguf'), filename: 'Qwen3-8B-Q4_K_M.gguf', sizeGB: 5 },
     { name: 'Qwen 3 14B', description: 'Qwen 3 14B — sweet spot of speed and quality.', pulls: '5M+', tags: ['14B', 'Q4_K_M', '9 GB'], updated: 'Popular', agent: true, released: '2025-05', downloadUrl: HF('unsloth/Qwen3-14B-GGUF', 'Qwen3-14B-Q4_K_M.gguf'), filename: 'Qwen3-14B-Q4_K_M.gguf', sizeGB: 9 },
     { name: 'Qwen 3 32B', description: 'Qwen 3 32B — powerful reasoning and coding.', pulls: '5M+', tags: ['32B', 'Q4_K_XL', '20 GB'], updated: 'Popular', agent: true, released: '2025-05', downloadUrl: HF('unsloth/Qwen3-32B-GGUF', 'Qwen3-32B-UD-Q4_K_XL.gguf'), filename: 'Qwen3-32B-UD-Q4_K_XL.gguf', sizeGB: 20 },

@@ -20,6 +20,10 @@ const AGENT_COMPATIBLE = [
   'deepseek-v2.5', 'deepseek-v3',
   'glm4', 'glm-4',
   'gemma3', 'gemma4',
+  // IBM Granite — native tool calling (BFCL v3 ~60). 'granite' as a free word
+  // matches granite-4.0-micro / granite3.3 etc. after normalizeFamily. Without
+  // this, the sub-4GB Granite 4.0 Micro tool-caller had Agent Mode grayed out.
+  'granite',
   'nemotron',
 ]
 

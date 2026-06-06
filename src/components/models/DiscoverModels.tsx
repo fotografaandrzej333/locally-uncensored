@@ -176,7 +176,11 @@ export function DiscoverModels({ category, search = '', searchSubmitToken = 0 }:
   const [loading, setLoading] = useState(false)
   const [systemVRAM, setSystemVRAM] = useState<number | null>(null)
   const [subTab, setSubTab] = useState<'uncensored' | 'mainstream'>('uncensored')
-  const [vramTier, setVramTier] = useState<'all' | 'lightweight' | 'mid' | 'highend'>('all')
+  // Weight-class categories (David 2026-06-06): four size buckets so every
+  // model lands in exactly one class — Ultra Lightweight ≤4 GB, Lightweight
+  // 4–10 GB, Middleweight 10–20 GB, High-End >20 GB (open-ended). Replaces the
+  // older 3-tier lightweight/mid/highend VRAM filter.
+  const [vramTier, setVramTier] = useState<'all' | 'ultra' | 'light' | 'middle' | 'highend'>('all')
   const downloads = useDownloadStore(s => s.downloads)
   const dlStore = useDownloadStore
 
@@ -281,9 +285,10 @@ export function DiscoverModels({ category, search = '', searchSubmitToken = 0 }:
   const vramFilteredBundles = tabFilteredBundles.filter(b => {
     if (vramTier === 'all') return true
     const vram = parseVRAM(b.vramRequired)
-    if (vramTier === 'lightweight') return vram <= 10
-    if (vramTier === 'mid') return vram > 10 && vram <= 16
-    return vram > 16 // highend
+    if (vramTier === 'ultra') return vram <= 4
+    if (vramTier === 'light') return vram > 4 && vram <= 10
+    if (vramTier === 'middle') return vram > 10 && vram <= 20
+    return vram > 20 // highend (open-ended)
   })
 
   const filteredBundles = search
@@ -480,9 +485,10 @@ export function DiscoverModels({ category, search = '', searchSubmitToken = 0 }:
   const matchesVramTier = (sizeGB?: number) => {
     if (vramTier === 'all') return true
     if (sizeGB === undefined || sizeGB === null) return true
-    if (vramTier === 'lightweight') return sizeGB <= 10
-    if (vramTier === 'mid') return sizeGB > 10 && sizeGB <= 16
-    return sizeGB > 16 // highend
+    if (vramTier === 'ultra') return sizeGB <= 4
+    if (vramTier === 'light') return sizeGB > 4 && sizeGB <= 10
+    if (vramTier === 'middle') return sizeGB > 10 && sizeGB <= 20
+    return sizeGB > 20 // highend (open-ended)
   }
 
   const matchesSearch = (m: DiscoverModel) =>
@@ -677,9 +683,10 @@ export function DiscoverModels({ category, search = '', searchSubmitToken = 0 }:
         <div className="flex gap-1.5">
           {([
             { key: 'all', label: 'All', desc: '' },
-            { key: 'lightweight', label: 'Lightweight', desc: '≤10 GB' },
-            { key: 'mid', label: 'Mid-Range', desc: '10-16 GB' },
-            { key: 'highend', label: 'High-End', desc: '>16 GB' },
+            { key: 'ultra', label: 'Ultra Lightweight', desc: '≤4 GB' },
+            { key: 'light', label: 'Lightweight', desc: '4–10 GB' },
+            { key: 'middle', label: 'Middleweight', desc: '10–20 GB' },
+            { key: 'highend', label: 'High-End', desc: '>20 GB' },
           ] as const).map(tier => (
             <button
               key={tier.key}

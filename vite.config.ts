@@ -700,13 +700,27 @@ function comfyLauncher(): Plugin {
             const { existsSync, statSync } = require('fs')
             const { join } = require('path')
             const home = require('os').homedir()
-            // Try to find ComfyUI path
-            const candidates = [
-              join(home, 'ComfyUI'),
-              join(home, 'Desktop', 'ComfyUI'),
-              'C:\\ComfyUI',
-            ]
-            const comfyPath = candidates.find(p => existsSync(p)) || join(home, 'ComfyUI')
+            // Prefer the ComfyUI path the app actually persisted (matches the
+            // Rust backend); only then fall back to common defaults. Without
+            // this the dev stub guessed wrong for non-default installs and
+            // reported every curated model "incomplete" → "no image model"
+            // (konata-session 2026-06-07).
+            let comfyPath = ''
+            try {
+              const cfgPath = join(process.env.APPDATA || join(home, 'AppData', 'Roaming'), 'locally-uncensored', 'config.json')
+              if (existsSync(cfgPath)) {
+                const cfg = JSON.parse(require('fs').readFileSync(cfgPath, 'utf8'))
+                if (cfg.comfyui_path && existsSync(cfg.comfyui_path)) comfyPath = cfg.comfyui_path
+              }
+            } catch { /* ignore — fall through to candidates */ }
+            if (!comfyPath) {
+              const candidates = [
+                join(home, 'ComfyUI'),
+                join(home, 'Desktop', 'ComfyUI'),
+                'C:\\ComfyUI',
+              ]
+              comfyPath = candidates.find(p => existsSync(p)) || join(home, 'ComfyUI')
+            }
             const results = (files as any[]).map((f: any) => {
               const subfolder = f.subfolder || ''
               const dir = subfolder.startsWith('custom_nodes')
@@ -1439,6 +1453,59 @@ function comfyLauncher(): Plugin {
         res.end(JSON.stringify({
           os: process.platform, arch: process.arch, hostname: os.hostname(),
           username: os.userInfo().username, totalMemory: os.totalmem(), cpuCount: os.cpus().length,
+        }))
+      })
+
+      // API: System health (mirrors the Rust `system_health` command so the
+      // Settings → Troubleshoot "Re-probe" button works under `npm run dev`
+      // too. The plain dev server previously had no /local-api/system-health,
+      // so the button errored (konata-session 2026-06-07). Dev-only — the
+      // packaged app uses the real Rust probe.
+      server.middlewares.use('/local-api/system-health', async (_req, res) => {
+        const os = require('os')
+        const probe = async (url: string, endpoint: string) => {
+          try {
+            const r = await fetch(url)
+            return { status: r.ok ? 'ok' : 'error', detail: `HTTP ${r.status}`, endpoint }
+          } catch (e: any) {
+            return { status: 'unreachable', detail: String(e?.message || e), endpoint }
+          }
+        }
+        const ollamaBase = (process.env.OLLAMA_HOST && /^https?:/.test(process.env.OLLAMA_HOST))
+          ? process.env.OLLAMA_HOST.replace(/\/+$/, '')
+          : 'http://localhost:11434'
+        const [ollama, comfyui, lm_studio] = await Promise.all([
+          probe(`${ollamaBase}/api/tags`, ollamaBase),
+          probe('http://localhost:8188/system_stats', 'http://localhost:8188'),
+          probe('http://localhost:1234/v1/models', 'http://localhost:1234'),
+        ])
+        let vram_total_gb: number | null = null
+        let vram_free_gb: number | null = null
+        try {
+          const { execSync } = require('child_process')
+          const out = execSync('nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits',
+            { encoding: 'utf8', timeout: 4000 })
+          const [tot, free] = String(out).trim().split('\n')[0].split(',').map((s: string) => parseFloat(s.trim()))
+          if (!isNaN(tot)) vram_total_gb = +(tot / 1024).toFixed(1)
+          if (!isNaN(free)) vram_free_gb = +(free / 1024).toFixed(1)
+        } catch { /* no nvidia-smi → null */ }
+        let disk_free_gb = 0
+        try {
+          const fs: any = require('fs')
+          if (fs.statfsSync) {
+            const st = fs.statfsSync(os.homedir())
+            disk_free_gb = +((st.bavail * st.bsize) / 1e9).toFixed(1)
+          }
+        } catch { /* statfs unavailable */ }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          version: 'dev',
+          host: {
+            os: process.platform, os_version: os.release(), arch: process.arch,
+            cpu_count: os.cpus().length, ram_gb: +(os.totalmem() / 1e9).toFixed(1),
+            disk_free_gb, vram_total_gb, vram_free_gb,
+          },
+          ollama, comfyui, lm_studio,
         }))
       })
 

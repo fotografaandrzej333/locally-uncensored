@@ -2,16 +2,36 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Search, Globe, FileText, FileEdit, Terminal, Image, Film, Loader2, Check, X, Clock, AlertCircle, FolderOpen, Cpu, Monitor, GitBranch, Database } from 'lucide-react'
 import type { AgentToolCall } from '../../types/agent-mode'
+import { getComfyHost } from '../../api/backend'
 
-// F1 (konata3602 commitment 2026-05-23) — when image_generate / screenshot
-// produce an output URL the agent surfaces, we want the user to actually
-// SEE the picture rather than a path string. ComfyUI serves output via
-// http://localhost:8188/view?…; this regex pulls the URL out of the
-// result so we can render an <img> below the raw text. Only fires for
-// images we generated ourselves — third-party URLs in a tool result
-// must NOT be auto-loaded (CSP + privacy).
-// Exported for unit testing (see __tests__/ToolCallBlock-image.test.ts).
-export const INLINE_IMAGE_RE = /(http:\/\/(?:localhost|127\.0\.0\.1):\d+\/view\?[^\s)\]]+)/i
+// F1 (konata3602 commitment 2026-05-23) + render fix (konata3602 bug 2026-06-07)
+// — when image_generate / video_generate / screenshot produce a ComfyUI output,
+// the user must SEE the picture, not a path string. The tool result embeds a
+// ComfyUI /view URL whose exact form depends on the runtime:
+//   - packaged desktop (Tauri):     http://localhost:8188/view?filename=…
+//   - custom / remote ComfyUI host: http://<host>:<port>/view?filename=…
+//   - browser / dev (Vite proxy):   /comfyui/view?filename=…   ← konata's case
+// The original localhost-only regex silently failed on the latter two, so
+// konata (running the web build behind the /comfyui proxy) saw the raw
+// "/comfyui/view?…" text and NO image. comfyViewUrlFromResult() now accepts any
+// of those forms, but ONLY when the URL points at OUR ComfyUI — a relative
+// proxy path, a loopback host, or the user-configured comfy host — and carries
+// a filename. A third-party URL in a tool result is never auto-loaded (CSP +
+// privacy). Exported for unit testing (see __tests__/ToolCallBlock-image.test.ts).
+export function comfyViewUrlFromResult(result: string | null | undefined): string | null {
+  if (!result) return null
+  const m = result.match(/(https?:\/\/[^\s)\]]+\/view\?[^\s)\]]+|\/comfyui\/view\?[^\s)\]]+|\/view\?[^\s)\]]+)/i)
+  if (!m) return null
+  const url = m[1]
+  if (!/[?&]filename=/i.test(url)) return null               // must be a real ComfyUI output view
+  if (url.startsWith('/comfyui/view') || url.startsWith('/view?')) return url   // our own proxy path — safe
+  try {
+    const host = new URL(url).hostname.toLowerCase()
+    const loopback = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0'
+    if (loopback || host === getComfyHost().toLowerCase()) return url
+  } catch { /* not a parseable absolute URL — fall through to null */ }
+  return null
+}
 
 // Feature EE (v2.5.0): video_generate can produce .mp4 (VHS_VideoCombine) or
 // .webm outputs. We render those in a <video> element instead of an <img>.
@@ -72,6 +92,12 @@ export function ToolCallBlock({ toolCall, onApprove, onReject }: Props) {
   const isPending = toolCall.status === 'pending_approval'
   const isFailed = toolCall.status === 'failed' || toolCall.status === 'rejected'
 
+  // Inline media preview URL (image_generate / video_generate / screenshot).
+  // Computed once; rendered ALWAYS-visible below the header (even while the
+  // tool block is collapsed) so an auto-approved generation shows its picture
+  // without the user having to expand the block — konata's "and no image".
+  const previewUrl = comfyViewUrlFromResult(toolCall.result)
+
   return (
     <div className="mb-0.5">
       {/* Header line — monochrome, only status icon has subtle color */}
@@ -94,6 +120,35 @@ export function ToolCallBlock({ toolCall, onApprove, onReject }: Props) {
         )}
       </button>
 
+      {/* Inline media preview — ALWAYS visible for a completed image/video
+          generation, even while the tool block stays collapsed. Before the
+          konata 2026-06-07 fix this lived inside the collapsed details, so a
+          user with auto-approve (block closed) saw "Image generated: …" text
+          and no picture. A .mp4/.webm output renders in a <video>; everything
+          else — including animated .webp — in an <img>. URL is bounded to OUR
+          ComfyUI by comfyViewUrlFromResult (never auto-loads arbitrary URLs). */}
+      {previewUrl && (
+        <div className="pl-5 pt-0.5">
+          {isInlineVideoUrl(previewUrl) ? (
+            <video
+              src={previewUrl}
+              controls
+              loop
+              className="block max-w-full max-h-[320px] rounded border border-gray-200 dark:border-white/[0.06]"
+            />
+          ) : (
+            <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="block">
+              <img
+                src={previewUrl}
+                alt="Generated image"
+                className="max-w-full max-h-[320px] rounded border border-gray-200 dark:border-white/[0.06]"
+                loading="lazy"
+              />
+            </a>
+          )}
+        </div>
+      )}
+
       {/* Expandable details */}
       <AnimatePresence>
         {open && (
@@ -110,49 +165,12 @@ export function ToolCallBlock({ toolCall, onApprove, onReject }: Props) {
                 {JSON.stringify(toolCall.args, null, 2)}
               </pre>
 
-              {/* Result */}
+              {/* Result (raw text). The inline media preview now renders
+                  always-visible above the collapsible (konata 2026-06-07). */}
               {toolCall.result && (
-                <>
-                  <pre className="text-[0.55rem] leading-relaxed text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-white/[0.02] rounded px-2 py-1 overflow-auto scrollbar-thin max-h-[300px]">
-                    {toolCall.result}
-                  </pre>
-                  {/* Inline preview (F1 + Feature EE) — only when the result
-                      contains a ComfyUI view URL. Bounded to localhost so we
-                      never auto-load arbitrary tool output. A .mp4/.webm output
-                      (video_generate via VHS_VideoCombine) renders in a
-                      <video>; everything else — including animated .webp — in
-                      an <img>. */}
-                  {(() => {
-                    const m = toolCall.result?.match(INLINE_IMAGE_RE)
-                    if (!m) return null
-                    const url = m[1]
-                    if (isInlineVideoUrl(url)) {
-                      return (
-                        <video
-                          src={url}
-                          controls
-                          loop
-                          className="block mt-1 max-w-full max-h-[320px] rounded border border-gray-200 dark:border-white/[0.06]"
-                        />
-                      )
-                    }
-                    return (
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block mt-1"
-                      >
-                        <img
-                          src={url}
-                          alt="Generated image"
-                          className="max-w-full max-h-[320px] rounded border border-gray-200 dark:border-white/[0.06]"
-                          loading="lazy"
-                        />
-                      </a>
-                    )
-                  })()}
-                </>
+                <pre className="text-[0.55rem] leading-relaxed text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-white/[0.02] rounded px-2 py-1 overflow-auto scrollbar-thin max-h-[300px]">
+                  {toolCall.result}
+                </pre>
               )}
 
               {/* Error */}

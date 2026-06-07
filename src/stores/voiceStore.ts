@@ -57,12 +57,14 @@ export const useVoiceStore = create<VoiceState>()(
       sttAvailable: false,
       ttsAvailable: false,
 
-      // Persisted settings
-      sttEnabled: true,
-      // TTS (read-aloud) on by default — David 2026-06-06 "texttospeech
-      // aktivieren". There is no auto-speak; this just shows/enables the
-      // per-message read-aloud Speaker button when TTS is usable.
-      ttsEnabled: true,
+      // Persisted settings — voice OFF by default (David 2026-06-07:
+      // "tts und stt standardmäßig AUS und nicht immer automatisch vorlesen").
+      // STT and TTS are opt-in; nothing reads responses aloud automatically
+      // (the auto-speak on turn-completion was removed in useChat/useAgentChat).
+      // When the user turns TTS on, it only enables the per-message read-aloud
+      // Speaker button — reading happens on click, never automatically.
+      sttEnabled: false,
+      ttsEnabled: false,
       piperVoice: "en_US-lessac-medium",
       ttsVoice: "",
       ttsRate: 1.0,

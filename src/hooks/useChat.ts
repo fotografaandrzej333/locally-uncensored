@@ -4,10 +4,8 @@ import { useChatStore } from "../stores/chatStore"
 import { useModelStore } from "../stores/modelStore"
 import { useSettingsStore } from "../stores/settingsStore"
 import { useRAGStore } from "../stores/ragStore"
-import { useVoiceStore } from "../stores/voiceStore"
 import { useMemoryStore } from "../stores/memoryStore"
 import { retrieveContext } from "../api/rag"
-import { speakStreaming, isSpeechSynthesisSupported, getVoicesAsync } from "../api/voice"
 import { getModelMaxTokens } from "../lib/context-compaction"
 import { getModelContextCached } from "../api/ollama"
 import { effectiveContextWindow } from "../lib/context-window"
@@ -373,20 +371,9 @@ export function useChat() {
       useModelStore.getState().setIsModelLoading(false)
       abortRef.current = null
 
-      // Auto-speak response if TTS is enabled
-      const voiceState = useVoiceStore.getState()
-      if (voiceState.ttsEnabled && isSpeechSynthesisSupported() && contentRef.current.trim()) {
-        try {
-          let voice: SpeechSynthesisVoice | undefined
-          if (voiceState.ttsVoice) {
-            const voices = await getVoicesAsync()
-            voice = voices.find((v) => v.name === voiceState.ttsVoice)
-          }
-          voiceState.setSpeaking(true)
-          await speakStreaming(contentRef.current, voice, voiceState.ttsRate, voiceState.ttsPitch)
-        } catch { /* TTS errors are non-critical */ }
-        finally { voiceState.setSpeaking(false) }
-      }
+      // No auto-speak. Reading a response aloud is manual-only via the
+      // per-message Speaker button (David 2026-06-07: "nicht immer automatisch
+      // vorlesen"). Enabling TTS only surfaces that button; it never auto-reads.
 
       // Auto-extract memories (fire-and-forget)
       const memSettings = useMemoryStore.getState().settings

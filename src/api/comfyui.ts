@@ -511,9 +511,18 @@ export async function filterPartialFiles(filenames: string[]): Promise<Set<strin
 
   try {
     const { backendCall } = await import('./backend')
-    const results: Array<{ filename: string; complete: boolean }> =
+    const results: Array<{ filename: string; exists?: boolean; complete: boolean }> =
       await backendCall('check_model_sizes', { files: filesToCheck })
-    const incomplete = new Set(results.filter(r => !r.complete).map(r => r.filename))
+    // Only hide a model when it is CONFIRMED partial: present on disk but too
+    // small (exists === true && !complete). A bare `!complete` also dropped
+    // files the size-checker simply couldn't locate (exists === false) — which
+    // happens whenever the checker looks at the wrong ComfyUI path (the dev
+    // server's hardcoded path guesses, a custom/remote comfy host, etc.). But
+    // these filenames came FROM ComfyUI's own /object_info enums, so ComfyUI
+    // can load them — never hide a model ComfyUI vouches for just because a
+    // secondary size probe missed it (konata 2026-06-07: "no image model"
+    // even though ComfyUI had Juggernaut/RealVis installed).
+    const incomplete = new Set(results.filter(r => r.exists === true && !r.complete).map(r => r.filename))
     if (incomplete.size > 0) {
       log.info('comfyui.filtered_partial_downloads', { count: incomplete.size, files: [...incomplete] })
     }

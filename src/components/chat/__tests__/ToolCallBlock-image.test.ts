@@ -1,72 +1,106 @@
 /**
- * ToolCallBlock inline-image regex tests (F1 — konata3602 commitment 2026-05-23)
- *
- * INLINE_IMAGE_RE pulls a ComfyUI "/view" URL out of a tool result so the
- * chat UI can render the generated picture inline (ToolCallBlock.tsx:105
- * does `toolCall.result.match(INLINE_IMAGE_RE)` and feeds m[1] into <img src>).
- *
- * Two things must hold and are guarded here:
- *   1. The regex matches our own localhost/127.0.0.1 ComfyUI view URLs and
- *      does NOT match arbitrary third-party https URLs — auto-loading a
- *      remote image from tool output would be a CSP + privacy hole (see the
- *      comment above the regex in ToolCallBlock.tsx).
- *   2. The string executeImageGenerate() returns (builtin-tools.ts:937,
- *      `Image generated: <file> (prompt: "...")\n<url>`) places the URL where
- *      the regex can extract it cleanly.
+ * ToolCallBlock inline-media tests
+ *   - F1 (konata3602 commitment 2026-05-23): render generated pictures inline.
+ *   - Render fix (konata3602 bug 2026-06-07): the old localhost-only regex
+ *     silently failed on the /comfyui/view proxy path (web/dev build) and on a
+ *     custom ComfyUI host, so the user saw the raw "/comfyui/view?…" text and
+ *     NO image. comfyViewUrlFromResult() now accepts the proxy path, loopback
+ *     hosts, and the user-configured comfy host — while still NOT auto-loading
+ *     arbitrary third-party URLs from tool output (CSP + privacy).
  *
  * Run: npx vitest run src/components/chat/__tests__/ToolCallBlock-image.test.ts
  */
-import { describe, it, expect } from 'vitest'
-import { INLINE_IMAGE_RE, isInlineVideoUrl } from '../ToolCallBlock'
+import { describe, it, expect, afterEach } from 'vitest'
+import { comfyViewUrlFromResult, isInlineVideoUrl } from '../ToolCallBlock'
+import { setComfyHost, getComfyHost } from '../../../api/backend'
 
-describe('INLINE_IMAGE_RE', () => {
+describe('comfyViewUrlFromResult', () => {
   describe('positive cases (our own ComfyUI output)', () => {
-    it('matches a localhost /view URL', () => {
+    it('returns a localhost /view URL', () => {
       const url = 'http://localhost:8188/view?filename=foo.png&subfolder=&type=output&t=123'
-      expect(INLINE_IMAGE_RE.test(url)).toBe(true)
-      // The component renders m[1], so the capture group must be the whole URL.
-      expect(url.match(INLINE_IMAGE_RE)?.[1]).toBe(url)
+      expect(comfyViewUrlFromResult(url)).toBe(url)
     })
 
-    it('matches a 127.0.0.1 /view URL', () => {
+    it('returns a 127.0.0.1 /view URL', () => {
       const url = 'http://127.0.0.1:8188/view?filename=x.png&subfolder=&type=output&t=456'
-      expect(INLINE_IMAGE_RE.test(url)).toBe(true)
-      expect(url.match(INLINE_IMAGE_RE)?.[1]).toBe(url)
+      expect(comfyViewUrlFromResult(url)).toBe(url)
+    })
+
+    // The exact bug konata hit: the web build talks to ComfyUI through the
+    // Vite "/comfyui" proxy, so the result URL is RELATIVE. The old regex
+    // (http://localhost only) never matched it → no image.
+    it('returns the /comfyui/view proxy path (konata regression)', () => {
+      const url = '/comfyui/view?filename=locally_uncensored_00018_.png&subfolder=&type=output'
+      expect(comfyViewUrlFromResult(url)).toBe(url)
+    })
+
+    it('returns a bare /view proxy path', () => {
+      const url = '/view?filename=foo.png&subfolder=&type=output'
+      expect(comfyViewUrlFromResult(url)).toBe(url)
     })
   })
 
   describe('negative cases (must NOT auto-load)', () => {
-    it('does NOT match a third-party https URL', () => {
-      // The whole point of bounding to localhost: a remote image URL in a
-      // tool result must never be auto-fetched.
-      expect(INLINE_IMAGE_RE.test('https://example.com/image.png')).toBe(false)
+    it('returns null for a third-party https image URL', () => {
+      expect(comfyViewUrlFromResult('https://example.com/image.png')).toBeNull()
     })
 
-    it('does NOT match a non-localhost host even on http /view', () => {
-      expect(INLINE_IMAGE_RE.test('http://evil.example.com:8188/view?filename=a.png')).toBe(false)
+    it('returns null for a non-local /view host (privacy)', () => {
+      // Has /view + filename but points at someone else's box — never auto-load.
+      expect(comfyViewUrlFromResult('http://evil.example.com:8188/view?filename=a.png')).toBeNull()
     })
 
-    it('does NOT match a localhost URL that is not the /view endpoint', () => {
-      expect(INLINE_IMAGE_RE.test('http://localhost:8188/api/history/abc')).toBe(false)
+    it('returns null for a localhost URL that is not /view', () => {
+      expect(comfyViewUrlFromResult('http://localhost:8188/api/history/abc')).toBeNull()
+    })
+
+    it('returns null for a /view URL with no filename', () => {
+      expect(comfyViewUrlFromResult('http://localhost:8188/view?subfolder=&type=output')).toBeNull()
+    })
+
+    it('returns null for empty / missing result', () => {
+      expect(comfyViewUrlFromResult('')).toBeNull()
+      expect(comfyViewUrlFromResult(null)).toBeNull()
+      expect(comfyViewUrlFromResult(undefined)).toBeNull()
     })
   })
 
-  describe('integration with executeImageGenerate() output format', () => {
-    // Mirrors the exact return string of executeImageGenerate (builtin-tools.ts:937):
-    //   `Image generated: ${filename} (prompt: "${prompt}")\n${url}`
-    // We hardcode a representative value rather than calling the function,
-    // which submits a real ComfyUI workflow over the network. If that format
-    // string changes, update this literal too.
-    const result =
-      'Image generated: foo.png (prompt: "test")\n' +
-      'http://localhost:8188/view?filename=foo.png&subfolder=&type=output&t=123'
+  describe('custom / remote ComfyUI host', () => {
+    afterEach(() => setComfyHost('localhost'))
 
-    it('extracts the URL from the full result string', () => {
-      const m = result.match(INLINE_IMAGE_RE)
-      expect(m).not.toBeNull()
-      // The "Image generated: …" prose and the prompt text must be stripped —
-      // only the bare URL ends up in <img src>.
-      expect(m?.[1]).toBe('http://localhost:8188/view?filename=foo.png&subfolder=&type=output&t=123')
+    it('returns a /view URL on the user-configured comfy host', () => {
+      setComfyHost('192.168.1.50')
+      expect(getComfyHost()).toBe('192.168.1.50')
+      const url = 'http://192.168.1.50:8188/view?filename=foo.png&subfolder=&type=output'
+      expect(comfyViewUrlFromResult(url)).toBe(url)
+    })
+
+    it('still rejects a different host even when a custom host is set', () => {
+      setComfyHost('192.168.1.50')
+      expect(comfyViewUrlFromResult('http://10.0.0.9:8188/view?filename=foo.png&type=output')).toBeNull()
+    })
+  })
+
+  describe('integration with executeImageGenerate() / pollAndExtract output', () => {
+    // Desktop (Tauri) shape — vram-handoff pollAndExtract:
+    //   `Image generated: <file> (prompt: "...")\n<absolute /view URL>`
+    it('extracts the absolute URL from the full desktop result string', () => {
+      const result =
+        'Image generated: foo.png (prompt: "test")\n' +
+        'http://localhost:8188/view?filename=foo.png&subfolder=&type=output&t=123'
+      expect(comfyViewUrlFromResult(result)).toBe(
+        'http://localhost:8188/view?filename=foo.png&subfolder=&type=output&t=123',
+      )
+    })
+
+    // Web/dev (Vite proxy) shape — exactly what konata pasted on Discord.
+    it('extracts the relative proxy URL from the konata result string', () => {
+      const result =
+        'Image generated: locally_uncensored_00018_.png (prompt: "...")\n' +
+        '/comfyui/view?filename=locally_uncensored_00018_.png&subfolder=&type=output'
+      expect(comfyViewUrlFromResult(result)).toBe(
+        '/comfyui/view?filename=locally_uncensored_00018_.png&subfolder=&type=output',
+      )
     })
   })
 })
@@ -91,5 +125,8 @@ describe('isInlineVideoUrl', () => {
   it('does not misfire on a .mp4 substring elsewhere in the query', () => {
     // The video check keys off the filename param, not a stray ".mp4" token.
     expect(isInlineVideoUrl('http://localhost:8188/view?filename=foo.png&subfolder=a.mp4dir&type=output')).toBe(false)
+  })
+  it('detects a .mp4 on the relative /comfyui/view proxy path', () => {
+    expect(isInlineVideoUrl('/comfyui/view?filename=clip.mp4&subfolder=&type=output')).toBe(true)
   })
 })

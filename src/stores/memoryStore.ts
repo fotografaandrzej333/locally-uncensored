@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { v4 as uuid } from 'uuid'
-import type { MemoryEntry, MemoryCategory, MemoryFile, MemoryType, MemorySettings } from '../types/agent-mode'
+import type { MemoryEntry, MemoryCategory, MemoryFile, MemoryType, MemorySettings, MemoryBudgetTier } from '../types/agent-mode'
 import { MEMORY_MIGRATION_MAP, MEMORY_BUDGET_TIERS } from '../types/agent-mode'
 import { idbStorage } from '../lib/idbStorage'
 import { generateEmbeddings } from '../api/rag'
@@ -67,6 +67,25 @@ export function getMemoryBudget(contextTokens: number) {
     if (contextTokens <= tier.maxContext) return tier
   }
   return MEMORY_BUDGET_TIERS[MEMORY_BUDGET_TIERS.length - 1]
+}
+
+/**
+ * Memory budget after applying the user's manual override. null / <=0 → the
+ * context-tier budget unchanged. A positive override sets the injected count,
+ * grows the token budget (~150 tok/memory, never below the tier's) so the extra
+ * entries actually fit, and allows all types — so the user isn't locked to
+ * "32k ctx = 15 memories" (David 2026-06-07). Exported for unit testing.
+ */
+export function effectiveMemoryBudget(contextTokens: number, override?: number | null): MemoryBudgetTier {
+  const tier = getMemoryBudget(contextTokens)
+  if (override == null || override <= 0) return tier
+  const n = Math.floor(override)
+  return {
+    ...tier,
+    maxMemories: n,
+    budgetTokens: Math.max(tier.budgetTokens, n * 150),
+    typesAllowed: 'all',
+  }
 }
 
 // ── Injection Sanitization ────────────────────────────────────
@@ -365,7 +384,7 @@ export const useMemoryStore = create<MemoryState>()(
       // IndexedDB. getMemoriesForPromptAsync below layers embedding-blended
       // ordering on top and degrades to exactly this output on any error.
       getMemoriesForPrompt: (query, contextTokens) => {
-        const budget = getMemoryBudget(contextTokens)
+        const budget = effectiveMemoryBudget(contextTokens, get().settings.maxMemoriesOverride)
 
         // No budget for tiny models
         if (budget.budgetTokens === 0 || budget.maxMemories === 0) return ''
@@ -401,7 +420,7 @@ export const useMemoryStore = create<MemoryState>()(
       getMemoriesForPromptAsync: async (query, contextTokens) => {
         const fallback = () => get().getMemoriesForPrompt(query, contextTokens)
         try {
-          const budget = getMemoryBudget(contextTokens)
+          const budget = effectiveMemoryBudget(contextTokens, get().settings.maxMemoriesOverride)
           // No-op cases (no budget, no candidates, empty query) must return
           // EXACTLY what the sync keyword path would — defer to fallback()
           // rather than re-deriving '' so behaviour stays identical (and so a

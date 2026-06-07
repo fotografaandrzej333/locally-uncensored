@@ -160,8 +160,14 @@ export interface MemoryFile {
 export interface MemorySettings {
   autoExtractEnabled: boolean    // default false — opt-in (costs extra inference)
   autoExtractInAllModes: boolean // default false — whether to also extract outside agent mode
-  maxMemoriesInPrompt: number    // default 10
+  maxMemoriesInPrompt: number    // default 10 (legacy; retrieval uses the budget tier / override)
   maxMemoryChars: number         // default 3000
+  // User override for how many memories get injected into the prompt. null =
+  // auto (derive from the model's context size via MEMORY_BUDGET_TIERS).
+  // Set a number to take manual control instead of "32k ctx = 15 memories"
+  // (David 2026-06-07). The token budget scales with it so the extra entries
+  // actually fit. Optional for back-compat with pre-2.5.1 persisted settings.
+  maxMemoriesOverride?: number | null
 }
 
 // Migration map: old category → new type

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { useChatStore } from '../chatStore'
 import { useModelStore } from '../modelStore'
 import { useAgentModeStore } from '../agentModeStore'
-import { useMemoryStore } from '../memoryStore'
+import { useMemoryStore, effectiveMemoryBudget } from '../memoryStore'
 import type { Message } from '../../types/chat'
 import type { AIModel } from '../../types/models'
 import type { AgentBlock } from '../../types/agent-mode'
@@ -432,6 +432,45 @@ describe('memoryStore', () => {
       const md = '# Memory\n\n## User\n\n- **Likes** — coffee [drinks] *(import)*\n'
       expect(useMemoryStore.getState().importFromMarkdown(md)).toBe(1)
       expect(useMemoryStore.getState().entries[0].content).toBe('coffee')
+    })
+  })
+
+  // David 2026-06-07: manual memory-limit override instead of "32k ctx = 15".
+  describe('effectiveMemoryBudget (manual limit override)', () => {
+    it('returns the context-tier budget when override is null/0/undefined', () => {
+      expect(effectiveMemoryBudget(32768, null).maxMemories).toBe(15)
+      expect(effectiveMemoryBudget(32768, 0).maxMemories).toBe(15)
+      expect(effectiveMemoryBudget(32768, undefined).maxMemories).toBe(15)
+    })
+    it('honors a positive override and grows the token budget + allows all types', () => {
+      const b = effectiveMemoryBudget(32768, 30)
+      expect(b.maxMemories).toBe(30)
+      expect(b.budgetTokens).toBeGreaterThanOrEqual(30 * 150)
+      expect(b.typesAllowed).toBe('all')
+    })
+    it('floors a fractional override', () => {
+      expect(effectiveMemoryBudget(8192, 5.9).maxMemories).toBe(5)
+    })
+  })
+
+  // "Do memories actually greifen?" — prove a matching memory lands in the
+  // injected prompt block, and that the manual override caps the count.
+  describe('getMemoriesForPrompt injection', () => {
+    it('injects a keyword-matching memory into the prompt block', () => {
+      useMemoryStore.getState().addMemory({ type: 'user', title: 'Favorite language', description: '', content: 'My favorite programming language is Rust', tags: [] })
+      const block = useMemoryStore.getState().getMemoriesForPrompt('what is my favorite programming language?', 32768)
+      expect(block).toContain('Rust')
+    })
+    it('caps injected memories at the manual override', () => {
+      // Unique marker only in CONTENT (title is shared) so each memory shows
+      // its marker exactly once in the rendered block.
+      for (const m of ['uniqaaa', 'uniqbbb', 'uniqccc']) {
+        useMemoryStore.getState().addMemory({ type: 'user', title: 'note', description: '', content: `shared topic ${m}`, tags: [] })
+      }
+      useMemoryStore.setState({ settings: { ...useMemoryStore.getState().settings, maxMemoriesOverride: 1 } })
+      const block = useMemoryStore.getState().getMemoriesForPrompt('shared topic', 32768)
+      const present = ['uniqaaa', 'uniqbbb', 'uniqccc'].filter((m) => block.includes(m)).length
+      expect(present).toBe(1)
     })
   })
 

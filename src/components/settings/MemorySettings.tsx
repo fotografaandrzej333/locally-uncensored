@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Brain, Download, Upload, Trash2, Search, Plus, X, Check, Pencil, Zap, FileJson, Archive, Sparkles } from 'lucide-react'
-import { useMemoryStore, getMemoryBudget } from '../../stores/memoryStore'
+import { useMemoryStore, effectiveMemoryBudget } from '../../stores/memoryStore'
 import { useModelStore } from '../../stores/modelStore'
 import { getModelMaxTokens } from '../../lib/context-compaction'
 import { GlowButton } from '../ui/GlowButton'
@@ -48,14 +48,16 @@ export function MemorySettings() {
       return
     }
     getModelMaxTokens(model).then((ctx) => {
-      const budget = getMemoryBudget(ctx)
+      const override = settings.maxMemoriesOverride
+      const budget = effectiveMemoryBudget(ctx, override)
+      const manual = override != null && override > 0 ? ' (manual)' : ''
       if (budget.budgetTokens === 0) {
         setContextBudgetLabel(`${Math.round(ctx / 1024)}K ctx — memory injection disabled`)
       } else {
-        setContextBudgetLabel(`${Math.round(ctx / 1024)}K ctx — up to ${budget.maxMemories} memories injected`)
+        setContextBudgetLabel(`${Math.round(ctx / 1024)}K ctx — up to ${budget.maxMemories} memories injected${manual}`)
       }
     }).catch(() => setContextBudgetLabel(''))
-  }, [])
+  }, [settings.maxMemoriesOverride])
 
   const isEntryStale = (e: MemoryFile) => e.stale === true || typeof e.supersededBy === 'string'
   const staleCount = entries.filter(isEntryStale).length
@@ -194,6 +196,27 @@ export function MemorySettings() {
           {contextBudgetLabel}
         </div>
       )}
+
+      {/* Manual memory limit — override the context-derived count (David
+          2026-06-07: "memory limit selber setzen, nicht 32k = 15 memories").
+          Blank = auto (tier-based). */}
+      <div className="flex items-center justify-between gap-2 text-[0.6rem] text-gray-500 px-0.5">
+        <span>Max memories injected</span>
+        <input
+          type="number"
+          min={0}
+          max={100}
+          value={settings.maxMemoriesOverride ?? ''}
+          placeholder="Auto"
+          onChange={(e) => {
+            const v = e.target.value.trim()
+            const n = v === '' ? null : Math.max(0, Math.min(100, Math.floor(Number(v) || 0)))
+            updateMemorySettings({ maxMemoriesOverride: n })
+          }}
+          className="w-16 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/5 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-white text-right placeholder-gray-500 focus:outline-none focus:border-gray-400 dark:focus:border-white/20"
+          title="How many memories to inject into the prompt. Blank = auto (based on your model's context size)."
+        />
+      </div>
 
       {/* Settings toggles */}
       <div className="space-y-1.5 pb-2 border-b border-gray-200 dark:border-white/5">

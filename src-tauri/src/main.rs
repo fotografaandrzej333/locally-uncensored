@@ -236,6 +236,33 @@ fn main() {
                 let _ = window.set_shadow(false);
             }
 
+            // ─── Bug D (surfingbird1010): force-show fallback ───
+            // The window starts hidden (visible:false in tauri.conf.json) and is
+            // normally revealed by the frontend's invoke('show_window') once React
+            // mounts (App.tsx). If the WebView never loads, or a render/hydration
+            // throw happens before that effect runs (corrupt persisted state,
+            // GPU/WebView2 fault), the window would stay hidden forever and the app
+            // looks like it "runs with no window". Reveal it unconditionally after a
+            // timeout so the user always gets a window. The frontend's earlier
+            // show_window is idempotent, so a healthy launch sees no double-show /
+            // flicker. 10 s is comfortably longer than a normal cold React mount
+            // (~1-2 s) yet short enough not to feel broken on a slow i7/8 GB box.
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    if let Some(window) = handle.get_webview_window("main") {
+                        // Treat "unknown" as hidden → show (a redundant show on an
+                        // already-visible window is a harmless no-op).
+                        if !window.is_visible().unwrap_or(false) {
+                            println!("[Window] Force-show fallback fired (frontend never called show_window)");
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                });
+            }
+
             // ─── System Tray ───
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;

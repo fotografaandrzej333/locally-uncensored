@@ -322,12 +322,39 @@ export async function buildDynamicWorkflow(
       : type === 'cosmos' ? 'cosmos'
       : 'flux'
 
-    let vae: string, clip: string
-    try { vae = await findMatchingVAE(type) } catch { vae = models.vaes[0] || '' }
-    // Pass the active UNet filename so the resolver can prefer the matching
-    // quantisation tier (fp4 model → fp4 encoder; fp8/bf16 model → full-
-    // precision encoder). See findMatchingCLIP's flux2 branch.
-    try { clip = await findMatchingCLIP(type, params.model) } catch { clip = models.clips[0] || '' }
+    // Resolve the text encoder from the LIVE ComfyUI node enum. CRITICAL
+    // (Bug C / aldrich "CLIPLoader: Value not in list"): do NOT silently fall
+    // back to models.clips[0] / '' on a miss — an empty or wrong clip_name makes
+    // ComfyUI reject the prompt with that exact cryptic error. findMatchingCLIP
+    // already throws an actionable "download <encoder>" message; propagate it as
+    // a WorkflowUnavailableError so the user gets the download hint instead of a
+    // raw rejection. Pass the active UNet filename so the resolver prefers the
+    // matching quant tier (fp4 model → fp4 encoder; fp8/bf16 → full precision).
+    let clip: string
+    try {
+      clip = await findMatchingCLIP(type, params.model)
+    } catch (clipErr) {
+      throw new WorkflowUnavailableError(
+        clipErr instanceof Error ? clipErr.message : 'Required text encoder not found in ComfyUI.',
+        strategy,
+      )
+    }
+
+    // VAE is only loaded for strategies with a separate VAELoader — LTX bakes it
+    // into the pipeline, so a missing VAE there is fine. Validate (same
+    // no-silent-fallback rule) only when it will actually be used.
+    const needsVAELoader = strategy !== 'unet_ltx'
+    let vae = ''
+    if (needsVAELoader) {
+      try {
+        vae = await findMatchingVAE(type)
+      } catch (vaeErr) {
+        throw new WorkflowUnavailableError(
+          vaeErr instanceof Error ? vaeErr.message : 'Required VAE not found in ComfyUI.',
+          strategy,
+        )
+      }
+    }
 
     workflow[unetId] = {
       class_type: 'UNETLoader',
@@ -338,8 +365,6 @@ export async function buildDynamicWorkflow(
       inputs: { clip_name: clip, type: clipType, device: 'default' },
     }
 
-    // LTX doesn't need a separate VAE loader — VAE is built into the pipeline
-    const needsVAELoader = strategy !== 'unet_ltx'
     let vaeId: string
     if (needsVAELoader) {
       vaeId = String(n++)

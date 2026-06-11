@@ -81,7 +81,7 @@ vi.mock('../agent-context', () => ({
 // settingsStore is the real module — pure, no services. The orchestrator reads
 // settings.exclusiveVramMode through it; default DEFAULT_SETTINGS = 'auto'.
 
-import { decideUnload, vramHandoffGenerate, pollGone, resolveClip, resolveModelName, resolveI2VResolution } from '../vram-handoff'
+import { decideUnload, vramHandoffGenerate, pollGone, resolveClip, resolveModelName, resolveI2VResolution, comfyErrorHint } from '../vram-handoff'
 import { useSettingsStore } from '../../stores/settingsStore'
 
 const GB = 1024 * 1024 * 1024
@@ -248,6 +248,29 @@ describe('resolveI2VResolution', () => {
     expect(r.width % 16).toBe(0)
     expect(r.height % 16).toBe(0)
     expect(r.width).toBeLessThanOrEqual(512)
+  })
+})
+
+// ── comfyErrorHint: actionable hints for cryptic ComfyUI node errors ──
+describe('comfyErrorHint', () => {
+  it('FramePack HyVideoModel error → points at the custom-node, not LU', () => {
+    const h = comfyErrorHint('FramePackSampler', 'AttributeError', "'HyVideoModel' object has no attribute 'diffusion_model'")
+    expect(h).toMatch(/FramePackWrapper/)
+    expect(h).toMatch(/not in Locally Uncensored/i)
+    expect(h).toMatch(/SVD|Wan 2\.2/)
+  })
+
+  it('OOM error → actionable VRAM advice', () => {
+    expect(comfyErrorHint('KSampler', 'torch.OutOfMemoryError', 'Allocation on device')).toMatch(/GPU memory/i)
+    expect(comfyErrorHint(undefined, undefined, 'CUDA out of memory')).toMatch(/GPU memory/i)
+  })
+
+  it('unknown error → no hint (verbatim error stands alone)', () => {
+    expect(comfyErrorHint('KSampler', 'ValueError', 'something weird')).toBe('')
+  })
+
+  it('does not false-positive the FramePack hint on an unrelated node', () => {
+    expect(comfyErrorHint('KSampler', 'AttributeError', 'diffusion_model missing')).toBe('')
   })
 })
 

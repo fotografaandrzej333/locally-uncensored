@@ -1021,11 +1021,16 @@ async function pollAndExtract(promptId: string, prompt: string, kindLabel: strin
       return `${kindLabel} generation completed but no output produced.`
     }
     if (history?.status?.status_str === 'error') {
-      // Verbatim ComfyUI error — could be an OOM, a missing node, a bad VAE…
-      const msg = history.status.messages?.map((m: any) => m?.[1]?.message).filter(Boolean).join(' | ')
+      // Pull the richest detail ComfyUI gives us: an execution_error carries
+      // node_type + exception_type + exception_message (the plain `message`
+      // field is usually empty for node errors — David 2026-06-11, FramePack).
+      const errEntry = history.status.messages?.find((m: any) => m?.[0] === 'execution_error')?.[1]
+      const rawMsg = errEntry?.exception_message
+        || history.status.messages?.map((m: any) => m?.[1]?.message).filter(Boolean).join(' | ')
         || history.status.messages?.[0]?.[1]?.message
         || 'Unknown ComfyUI error'
-      return `${kindLabel} generation failed: ${msg}`
+      const hint = comfyErrorHint(errEntry?.node_type, errEntry?.exception_type, String(rawMsg))
+      return `${kindLabel} generation failed: ${rawMsg}${hint ? `\n\n${hint}` : ''}`
     }
   }
   const mins = Math.round(timeoutMs / 60000)
@@ -1033,6 +1038,27 @@ async function pollAndExtract(promptId: string, prompt: string, kindLabel: strin
 }
 
 // ── Small helpers ─────────────────────────────────────────────────
+
+/**
+ * Map a known-cryptic ComfyUI node error to an actionable hint (C-fix pattern).
+ * Returns '' when we have nothing better to add than the verbatim error.
+ * Exported + pure for the unit tests.
+ */
+export function comfyErrorHint(nodeType: string | undefined, _excType: string | undefined, message: string): string {
+  const m = message.toLowerCase()
+  // FramePack wrapper version mismatch (David 2026-06-11, RTX 3060): the
+  // installed ComfyUI-FramePackWrapper's LoadFramePackModel produces a
+  // HyVideoModel its OWN FramePackSampler can't consume. Upstream custom-node
+  // bug — independent of LU's workflow (which now loads without OOM).
+  if ((nodeType === 'FramePackSampler' || /framepack/i.test(nodeType ?? '')) &&
+      m.includes('hyvideomodel') && m.includes('diffusion_model')) {
+    return 'This is a bug in the installed ComfyUI-FramePackWrapper custom node (its model loader and sampler are out of sync), not in Locally Uncensored. Update the node from ComfyUI Manager (search "FramePack"), or pick a different image-to-video model (SVD works on 12 GB; Wan 2.2 5B is the recommended higher-quality option).'
+  }
+  if (m.includes('out of memory') || m.includes('outofmemory') || _excType === 'torch.OutOfMemoryError') {
+    return 'Ran out of GPU memory. Try a shorter clip / lower resolution, set VRAM hand-off to "always" in Settings so the chat model is evicted first, or pick a lighter model.'
+  }
+  return ''
+}
 
 function label(kind: 'image' | 'video'): string {
   return kind === 'video' ? 'Video' : 'Image'

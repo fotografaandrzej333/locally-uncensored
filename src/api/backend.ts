@@ -556,7 +556,12 @@ export async function downloadComfyFile(filename: string, subfolder: string = ''
     return
   }
 
-  // Tauri mode: fetch bytes through proxy, create blob URL
+  // Tauri mode: fetch the bytes through the proxy, then a NATIVE Save-As dialog.
+  // The old blob-URL + anchor-click pattern is UNRELIABLE in WebView2 — the
+  // webview navigates to the blob URL instead of saving it, so clicking Download
+  // did nothing (David 2026-06-12: "der download button geht nicht für video und
+  // image mcp"). save_binary_file_dialog writes the real bytes to the chosen path
+  // (same native dialog the chat file-artifact card uses, which works).
   const invoke = await getInvoke()
   try {
     const bytes = await invoke('proxy_localhost_stream', {
@@ -564,24 +569,29 @@ export async function downloadComfyFile(filename: string, subfolder: string = ''
       method: 'GET',
       body: null,
     }) as number[]
-    const blob = new Blob([new Uint8Array(bytes)])
-    const blobUrl = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = blobUrl
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(blobUrl)
+    const ext = filename.includes('.') ? filename.split('.').pop()! : 'bin'
+    // Returns the chosen path, or null if the user cancelled — nothing to do then.
+    await invoke('save_binary_file_dialog', {
+      bytes,
+      defaultName: filename,
+      extension: ext,
+      extLabel: ext.toUpperCase(),
+    })
   } catch (err) {
     log.error('[downloadComfyFile] Failed', { err })
-    // Fallback: try direct link
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    // Last-resort fallback: blob-anchor (unreliable in WebView2, but better than
+    // a silent no-op if the native dialog command is somehow unavailable).
+    try {
+      const bytes = await invoke('proxy_localhost_stream', { url, method: 'GET', body: null }) as number[]
+      const blobUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)]))
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(blobUrl)
+    } catch { /* give up */ }
   }
 }
 

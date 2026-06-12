@@ -149,6 +149,7 @@ fn main() {
             commands::filesystem::fs_search,
             commands::filesystem::fs_info,
             commands::filesystem::save_text_file_dialog,
+            commands::filesystem::save_binary_file_dialog,
             // System
             commands::system::system_info,
             commands::system::process_list,

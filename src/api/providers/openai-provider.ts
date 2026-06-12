@@ -63,10 +63,6 @@ interface OpenAIModelEntry {
   owned_by?: string
 }
 
-interface OpenAIError {
-  error?: { message?: string; type?: string; code?: string }
-}
-
 // ── Known context lengths for popular models ───────────────────
 
 const KNOWN_CONTEXT: Record<string, number> = {
@@ -543,10 +539,23 @@ export class OpenAIProvider implements ProviderClient {
     let code: string = 'network'
 
     try {
-      const data: OpenAIError = await res.json()
-      if (data.error?.message) message = data.error.message
-      if (data.error?.code) code = data.error.code
-    } catch { /* use default */ }
+      const data = await res.json() as { error?: unknown; message?: string }
+      const err = data.error
+      // OpenAI & most servers: { error: { message, code } }. But LM Studio and
+      // llama.cpp commonly send a BARE string ({ error: "..." }) or a top-level
+      // { message: "..." }. The old object-only read missed both → the real
+      // reason (e.g. a context-window overflow) was swallowed and the user saw
+      // the opaque "Request failed". Handle all three shapes.
+      if (typeof err === 'string' && err.trim()) {
+        message = err
+      } else if (err && typeof err === 'object') {
+        const eo = err as { message?: string; code?: string }
+        if (eo.message) message = eo.message
+        if (eo.code) code = eo.code
+      } else if (typeof data.message === 'string' && data.message.trim()) {
+        message = data.message
+      }
+    } catch { /* non-JSON body → keep default */ }
 
     // Map HTTP status to error code
     if (res.status === 401 || res.status === 403) {

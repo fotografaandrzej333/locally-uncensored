@@ -1883,7 +1883,14 @@ pub fn lmstudio_load_model(model: String, contextLength: Option<u32>) -> Result<
     // with `-c <N>` (`lms load --context-length`). Without a context length
     // this stays a plain load (the B3 power toggle path, unchanged).
     if contextLength.is_some() {
-        let _ = Command::new(&lms).args(["unload", &model]).output();
+        // Hide the console window the `lms` CLI would otherwise flash on
+        // Windows (CREATE_NO_WINDOW) — these run during normal model
+        // switching / the VRAM hand-off, not just at install time.
+        let mut unload = Command::new(&lms);
+        unload.args(["unload", &model]);
+        #[cfg(target_os = "windows")]
+        unload.creation_flags(CREATE_NO_WINDOW);
+        let _ = unload.output();
     }
     let ctx = contextLength.unwrap_or(0);
     let ctx_str = ctx.to_string();
@@ -1892,8 +1899,11 @@ pub fn lmstudio_load_model(model: String, contextLength: Option<u32>) -> Result<
         args.push("-c");
         args.push(ctx_str.as_str());
     }
-    let output = Command::new(&lms)
-        .args(&args)
+    let mut cmd = Command::new(&lms);
+    cmd.args(&args);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = cmd
         .output()
         .map_err(|e| format!("spawn lms load: {e}"))?;
     if !output.status.success() {
@@ -1963,8 +1973,11 @@ pub fn lmstudio_model_context(model: String) -> Result<serde_json::Value, String
 pub fn lmstudio_unload_model(model: String) -> Result<serde_json::Value, String> {
     let lms = lmstudio_lms_path()
         .ok_or_else(|| "lms CLI not found".to_string())?;
-    let output = Command::new(&lms)
-        .args(["unload", &model])
+    let mut cmd = Command::new(&lms);
+    cmd.args(["unload", &model]);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = cmd
         .output()
         .map_err(|e| format!("spawn lms unload: {e}"))?;
     if !output.status.success() {

@@ -3733,6 +3733,40 @@ impl RemoteServer {
     }
 }
 
+/// Best-effort: open the LAN port in Windows Firewall so phones on the same
+/// network can actually reach the remote server. Adding a firewall rule needs
+/// admin, so this silently no-ops for a non-elevated per-user install (that
+/// user has to allow it once via an elevated prompt / manually) — but it
+/// auto-fixes per-machine / admin-run installs. Without ANY rule, Windows drops
+/// inbound on the port and the phone can't connect even though the QR points at
+/// the correct LAN IP (David 2026-06-15: no rule existed and LU never made one,
+/// so LAN access silently failed while the IP/QR were correct).
+#[cfg(target_os = "windows")]
+fn ensure_lan_firewall_rule(port: u16) {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let name = format!("Locally Uncensored Remote {}", port);
+    // Idempotent: drop any prior rule for this name, then add a fresh inbound allow.
+    let _ = Command::new("netsh")
+        .args(["advfirewall", "firewall", "delete", "rule", &format!("name={}", name)])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    let _ = Command::new("netsh")
+        .args([
+            "advfirewall", "firewall", "add", "rule",
+            &format!("name={}", name),
+            "dir=in", "action=allow", "protocol=TCP",
+            &format!("localport={}", port),
+            "profile=private,domain",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ensure_lan_firewall_rule(_port: u16) {}
+
 #[tauri::command]
 pub async fn start_remote_server(
     app: AppHandle,
@@ -3837,6 +3871,12 @@ pub async fn start_remote_server(
             error!(error = %e, port = port, "remote server bind failed");
             format!("Could not bind {}: {}. Another instance may be running — try Stop first.", addr, e)
         })?;
+
+    // Best-effort: open the LAN port in Windows Firewall so the phone can reach
+    // us (see fn docs). Non-fatal — needs admin, so it only takes effect for
+    // elevated / per-machine installs; per-user installs still need a one-time
+    // manual allow. Never blocks server startup.
+    ensure_lan_firewall_rule(port);
 
     let handle = tokio::spawn(async move {
         let app = build_router(server_state);
@@ -4119,8 +4159,24 @@ pub async fn start_tunnel(
 
     let cf_path = get_cloudflared_path();
 
-    // Download cloudflared if not present
-    if !cf_path.exists() {
+    // (Re)download cloudflared if missing OR stale. It used to be cached
+    // FOREVER (download only `if !exists`), but trycloudflare's quick-tunnel
+    // API evolves and an old client then gets "500 / error code 1101"
+    // unmarshal failures with NO public URL — the tunnel silently never comes
+    // up (David 2026-06-15: stuck on cloudflared 2026.3.0 from March → every
+    // tunnel attempt 500'd). Re-pull the latest when the cached binary is more
+    // than 30 days old so the tunnel self-heals without the user ever knowing
+    // cloudflared exists.
+    let cf_stale = cf_path.metadata().ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.elapsed().ok())
+        .map(|age| age > std::time::Duration::from_secs(30 * 24 * 60 * 60))
+        .unwrap_or(true); // unknown mtime → treat as stale and refresh
+    if !cf_path.exists() || cf_stale {
+        if cf_path.exists() {
+            println!("[Tunnel] cloudflared is stale (>30 days) — re-downloading the latest");
+            let _ = std::fs::remove_file(&cf_path);
+        }
         let dir = cf_path.parent().ok_or("Invalid cloudflared install path")?;
         std::fs::create_dir_all(dir).map_err(|e| format!("mkdir: {}", e))?;
 

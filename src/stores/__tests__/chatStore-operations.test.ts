@@ -11,8 +11,9 @@
  * - searchConversations
  * - Auto-rename on first user message
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useChatStore } from '../chatStore'
+import { useRemoteStore } from '../remoteStore'
 import type { Message } from '../../types/chat'
 
 function msg(overrides: Partial<Message> = {}): Message {
@@ -60,6 +61,26 @@ describe('chatStore — conversation CRUD', () => {
     useChatStore.getState().deleteConversation(id)
     expect(useChatStore.getState().conversations).toHaveLength(0)
     expect(useChatStore.getState().activeConversationId).toBeNull()
+  })
+
+  it('stops the Remote session when the dispatched chat is deleted (David 2026-06-15)', () => {
+    const undispatch = vi.fn()
+    const id = useChatStore.getState().createConversation('gemma4', '', 'remote')
+    // Simulate this chat being the live dispatched Remote session.
+    useRemoteStore.setState({ dispatchedConversationId: id, undispatch })
+    useChatStore.getState().deleteConversation(id)
+    // Deleting/closing the dispatched chat must tear down server + tunnel.
+    expect(undispatch).toHaveBeenCalledTimes(1)
+    expect(useChatStore.getState().conversations).toHaveLength(0)
+  })
+
+  it('does NOT stop Remote when a different (non-dispatched) chat is deleted', () => {
+    const undispatch = vi.fn()
+    const dispatched = useChatStore.getState().createConversation('gemma4', '', 'remote')
+    const other = useChatStore.getState().createConversation('gemma4', '', 'lu')
+    useRemoteStore.setState({ dispatchedConversationId: dispatched, undispatch })
+    useChatStore.getState().deleteConversation(other)
+    expect(undispatch).not.toHaveBeenCalled()
   })
 
   it('renames a conversation', () => {

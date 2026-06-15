@@ -122,6 +122,15 @@ export function useModels() {
           await promise
           completePull(name)
           try { await fetchModels() } catch { /* model list refresh failed — non-critical */ }
+          // Auto-activate the freshly downloaded chat model so the chat actually
+          // switches to it instead of silently staying on the old default
+          // (forte_exe 2026-06-14: downloaded models didn't appear selected and
+          // the chat kept reverting). Chat models only — image/video live in the
+          // Create view. Matched by exact list name so a mismatch just no-ops.
+          {
+            const freshly = useModelStore.getState().models.find((m) => m.name === name)
+            if (freshly && freshly.type !== 'image' && freshly.type !== 'video') setActiveModel(name)
+          }
           // Auto-dismiss after 5s
           setTimeout(() => dismissPull(name), 5000)
         } catch (err) {
@@ -157,6 +166,11 @@ export function useModels() {
         } else {
           completePull(name)
           try { await fetchModels() } catch { /* non-critical */ }
+          // Auto-activate the freshly downloaded chat model (see note above).
+          {
+            const freshly = useModelStore.getState().models.find((m) => m.name === name)
+            if (freshly && freshly.type !== 'image' && freshly.type !== 'video') setActiveModel(name)
+          }
           setTimeout(() => dismissPull(name), 5000)
         }
       } catch (err) {
@@ -166,7 +180,7 @@ export function useModels() {
         // On abort (pause): card stays with "Paused" status
       }
     },
-    [activePulls, fetchModels, startPull, updatePullProgress, completePull, dismissPull]
+    [activePulls, fetchModels, startPull, updatePullProgress, completePull, dismissPull, setActiveModel]
   )
 
   const isPullingModel = useCallback(

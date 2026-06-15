@@ -262,6 +262,7 @@ pub fn execute_code(
     code: String,
     timeout: Option<u64>,
     #[allow(non_snake_case)] chatId: Option<String>,
+    #[allow(non_snake_case)] workingDirectory: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
     let timeout_ms = timeout.unwrap_or(30000);
@@ -273,10 +274,14 @@ pub fn execute_code(
     fs::write(&script_path, &code)
         .map_err(|e| format!("Write temp script: {}", e))?;
 
-    // cwd = per-chat workspace (auto-created). Python scripts that do
-    // relative file I/O land in the same isolated folder as file_read /
-    // file_write for this chat.
-    let workspace = agent_workspace(chatId.as_deref(), Some(&*state));
+    // cwd: prefer the agent's folder workspace (the repo the user picked,
+    // threaded from chatCtx as workingDirectory) so a script's relative file
+    // I/O lands in that repo; otherwise the per-chat sandbox (#62). Same
+    // resolution order as the file_* tools and shell_execute.
+    let workspace = match workingDirectory.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(wd) => PathBuf::from(wd),
+        None => agent_workspace(chatId.as_deref(), Some(&*state)),
+    };
     let _ = fs::create_dir_all(&workspace);
 
     let python_bin = state.python_bin.lock().unwrap().clone();

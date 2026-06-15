@@ -37,9 +37,10 @@ pub async fn shell_execute(
     timeout: Option<u64>,
     shell: Option<String>,
     chatId: Option<String>,
+    workingDirectory: Option<String>,
 ) -> Result<serde_json::Value, String> {
     tokio::task::spawn_blocking(move || {
-        shell_execute_sync(command, args, cwd, timeout, shell, chatId)
+        shell_execute_sync(command, args, cwd, timeout, shell, chatId, workingDirectory)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
@@ -52,6 +53,7 @@ fn shell_execute_sync(
     timeout: Option<u64>,
     shell: Option<String>,
     chat_id: Option<String>,
+    working_directory: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let timeout_ms = timeout.unwrap_or(120_000);
     let shell_bin = shell.unwrap_or_else(|| {
@@ -86,11 +88,16 @@ fn shell_execute_sync(
     // ~/Documents (David 2026-06-04). Mirrors the file tools' path resolution.
     let workdir: PathBuf = match cwd.as_ref().map(|d| Path::new(d)) {
         Some(p) if p.is_dir() => p.to_path_buf(),
-        _ => {
-            let w = workspace_cwd(chat_id.as_deref());
-            let _ = std::fs::create_dir_all(&w);
-            w
-        }
+        _ => match working_directory.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            // Folder workspace (the user's repo, from chatCtx.workingDirectory)
+            // wins over the per-chat sandbox for relative commands (#62).
+            Some(wd) => PathBuf::from(wd),
+            None => {
+                let w = workspace_cwd(chat_id.as_deref());
+                let _ = std::fs::create_dir_all(&w);
+                w
+            }
+        },
     };
     if workdir.is_dir() {
         cmd.current_dir(&workdir);

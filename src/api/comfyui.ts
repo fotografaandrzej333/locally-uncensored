@@ -955,19 +955,59 @@ export async function getHistory(promptId: string): Promise<any> {
 // ─── Upload image to ComfyUI (for I2V models like SVD, FramePack) ───
 
 export async function uploadImage(file: File): Promise<string> {
+  // Guard: ComfyUI's /upload/image answers an opaque HTTP 400 for an empty or
+  // unreadable file. Catch the empty-blob case up front with a clear message
+  // (konata 2026-06-14: "Video generation failed: Failed to upload image: HTTP 400").
+  if (!file || file.size === 0) {
+    throw new Error('Failed to upload image: the source image is empty (0 bytes) — it could not be read from ComfyUI.')
+  }
+
+  // ComfyUI saves the file under the multipart filename and opens it with PIL by
+  // extension, so it 400s on a missing/extension-less/odd name. Send an explicit,
+  // sanitised filename with a real image extension rather than trusting file.name
+  // (a Blob-derived File can carry "" or an extension-less name).
+  const safeName = ensureImageFilename(file.name, file.type)
   const formData = new FormData()
-  formData.append('image', file)
+  formData.append('image', file, safeName)
   formData.append('overwrite', 'true')
 
   // Direct fetch — localFetch only supports string body, not FormData.
-  // FormData needs multipart/form-data which fetch() sets automatically.
+  // FormData needs multipart/form-data which fetch() sets automatically. A 400
+  // here means the request reached ComfyUI and it rejected the content, so the
+  // proxy/CORS is not at fault — surface ComfyUI's actual reason instead of a
+  // bare status so the next failure is self-explanatory.
   const res = await fetch(comfyuiUrl('/upload/image'), {
     method: 'POST',
     body: formData,
   })
-  if (!res.ok) throw new Error(`Failed to upload image: HTTP ${res.status}`)
+  if (!res.ok) {
+    let detail = ''
+    try { detail = (await res.text()).trim() } catch { /* body empty / already consumed */ }
+    throw new Error(`Failed to upload image: HTTP ${res.status}${detail ? ` — ${detail.slice(0, 300)}` : ''}`)
+  }
   const data = await res.json()
   return data.name // ComfyUI returns { name, subfolder, type }
+}
+
+/** Ensure a ComfyUI-friendly image filename: a sane base plus a real image
+ *  extension inferred from the MIME type when the name lacks one. ComfyUI's
+ *  /upload/image needs a recognisable extension to open the file with PIL. */
+export function ensureImageFilename(name: string | undefined, mime: string | undefined): string {
+  const base = (name || '').replace(/^.*[\\/]/, '').trim()
+  if (base && /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(base)) return base
+  const ext = ((m) => {
+    switch ((m || '').toLowerCase()) {
+      case 'image/jpeg': return 'jpg'
+      case 'image/webp': return 'webp'
+      case 'image/gif': return 'gif'
+      case 'image/bmp': return 'bmp'
+      case 'image/tiff': return 'tiff'
+      default: return 'png'
+    }
+  })(mime)
+  const stem = (base ? base.replace(/\.[^.]*$/, '') : 'lu_input') || 'lu_input'
+  const safeStem = stem.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 64) || 'lu_input'
+  return `${safeStem}.${ext}`
 }
 
 export function getImageUrl(filename: string, subfolder: string = '', type: string = 'output', cacheBust?: string | number): string {

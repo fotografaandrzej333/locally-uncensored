@@ -1322,6 +1322,9 @@ async function resolveInputImage(ref: string): Promise<ResolvedInputImage> {
   const resp = await fetch(url)
   if (!resp.ok) throw new Error(`could not read input image "${ref}" (HTTP ${resp.status})`)
   const blob = await resp.blob()
+  if (!blob || blob.size === 0) {
+    throw new Error(`could not read input image "${ref}" — ComfyUI returned an empty file`)
+  }
   // Probe the source dimensions so the I2V path can pick the model's native
   // aspect ratio (David 2026-06-11: a portrait still forced into 768×448
   // landscape no longer resembled the source). Best-effort — a probe failure

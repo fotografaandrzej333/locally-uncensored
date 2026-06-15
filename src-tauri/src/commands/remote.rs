@@ -500,7 +500,7 @@ async fn handle_agent_tool(
             let code = body.args.get("code").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let timeout = body.args.get("timeout").and_then(|v| v.as_u64());
             if code.is_empty() { Err("code_execute needs a non-empty `code` argument.".into()) }
-            else { crate::commands::agent::execute_code(code, timeout, chat_id.clone(), app_state) }
+            else { crate::commands::agent::execute_code(code, timeout, chat_id.clone(), None, app_state) }
         }
         "web_search" => {
             let query = body.args.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -529,7 +529,7 @@ async fn handle_agent_tool(
                 // fs_list itself doesn't see AppState — pass an absolute
                 // path so it skips its own resolver.
                 let resolved = resolve_remote_path(&raw_path, chat_id.as_deref(), &app_state);
-                crate::commands::filesystem::fs_list(resolved, recursive, pattern, None)
+                crate::commands::filesystem::fs_list(resolved, recursive, pattern, None, None)
             }
         }
         "file_search" => {
@@ -547,7 +547,7 @@ async fn handle_agent_tool(
                 Err("file_search needs both `path` and `pattern` arguments.".into())
             } else {
                 let resolved = resolve_remote_path(&raw_path, chat_id.as_deref(), &app_state);
-                crate::commands::filesystem::fs_search(resolved, pattern, max, None)
+                crate::commands::filesystem::fs_search(resolved, pattern, max, None, None)
             }
         }
         "shell_execute" => {
@@ -574,7 +574,7 @@ async fn handle_agent_tool(
                 }
                 let timeout = body.args.get("timeout").and_then(|v| v.as_u64());
                 let shell = body.args.get("shell").and_then(|v| v.as_str()).map(String::from);
-                crate::commands::shell::shell_execute(command, None, cwd, timeout, shell, chat_id.clone()).await
+                crate::commands::shell::shell_execute(command, None, cwd, timeout, shell, chat_id.clone(), None).await
             }
         }
         "system_info" => crate::commands::system::system_info(),
@@ -4157,7 +4157,9 @@ pub async fn start_tunnel(
 
     // Start cloudflared tunnel (hidden — no terminal window for end users)
     let mut cmd = std::process::Command::new(&cf_path);
-    cmd.args(["tunnel", "--url", &format!("http://localhost:{}", port)])
+    // 127.0.0.1 (not "localhost") avoids a ~2 s IPv6 (::1) connect detour on
+    // some Windows boxes before cloudflared falls back to IPv4 (aldrich 2026-06).
+    cmd.args(["tunnel", "--url", &format!("http://127.0.0.1:{}", port)])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     #[cfg(target_os = "windows")]
@@ -4210,6 +4212,29 @@ pub async fn start_tunnel(
             url = g.clone();
         }
         if !url.is_empty() { break; }
+    }
+
+    // #aldrich (Discord 2026-06-13, "Error HTTP:503" on the phone): a
+    // trycloudflare quick-tunnel PRINTS its public URL several seconds before
+    // Cloudflare's edge↔origin path is actually ready to serve — so a phone
+    // that scans the QR immediately gets a transient 503. Poll the public
+    // /mobile route (exactly what the QR points at) until it answers, before we
+    // mark the URL ready. Bounded with a fallback: if it never becomes ready
+    // within the budget we proceed anyway (old behaviour) rather than hang.
+    if !url.is_empty() {
+        if let Ok(client) = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(8))
+            .no_proxy()
+            .build()
+        {
+            let probe = format!("{}/mobile", url);
+            for _ in 0..20 { // ~20 × 600 ms ≈ 12 s readiness budget
+                match client.get(&probe).send().await {
+                    Ok(resp) if resp.status().is_success() => break,
+                    _ => tokio::time::sleep(std::time::Duration::from_millis(600)).await,
+                }
+            }
+        }
     }
 
     // Store tunnel PID
